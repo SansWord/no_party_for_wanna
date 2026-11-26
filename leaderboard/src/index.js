@@ -6,9 +6,11 @@
 //
 // The server measures the run time (finish − start), so a client can't just post a fake time.
 
-import { validateFinish, corsOrigin, clampLimit, STARTS_PER_MINUTE } from './logic.js';
+import { validateFinish, corsOrigin, clampLimit, bucketOf, BUCKET_MS, STARTS_PER_MINUTE } from './logic.js';
 
 const TOP_N = 10;
+const BOARD_CACHE_MS = 10_000;
+let boardCache = null; // per-isolate cache for GET /api/leaderboard: { at, limit, body }
 
 export default {
   async fetch(request, env) {
@@ -36,7 +38,11 @@ export default {
 
     try {
       if (request.method === 'GET' && path === '/api/leaderboard') {
-        return json(await leaderboard(env, clampLimit(url.searchParams.get('limit'), TOP_N)));
+        const limit = clampLimit(url.searchParams.get('limit'), TOP_N);
+        if (!boardCache || boardCache.limit !== limit || Date.now() - boardCache.at > BOARD_CACHE_MS) {
+          boardCache = { at: Date.now(), limit, body: await leaderboard(env, limit) };
+        }
+        return json(boardCache.body);
       }
 
       if (request.method === 'POST' && path === '/api/runs') {
@@ -74,14 +80,25 @@ export default {
         if (!check.ok) return json({ error: check.error }, 422);
         const r = check.value;
 
-        await env.DB.prepare(
-          'INSERT INTO scores (id, player, time_ms, penalty_ms, errors, total_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        ).bind(runId, r.player, r.timeMs, r.penaltyMs, r.errors, r.totalMs, now).run();
+        const bucket = bucketOf(r.totalMs);
+        await env.DB.batch([
+          env.DB.prepare(
+            'INSERT INTO scores (id, player, time_ms, penalty_ms, errors, total_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          ).bind(runId, r.player, r.timeMs, r.penaltyMs, r.errors, r.totalMs, now),
+          env.DB.prepare("UPDATE stats SET value = value + 1 WHERE key = 'total'"),
+          env.DB.prepare('INSERT INTO score_buckets (bucket, n) VALUES (?, 1) ON CONFLICT(bucket) DO UPDATE SET n = n + 1')
+            .bind(bucket),
+        ]);
 
-        const rank = await env.DB.prepare(
-          'SELECT COUNT(*) + 1 AS r FROM scores WHERE total_ms < ? OR (total_ms = ? AND created_at < ?)',
-        ).bind(r.totalMs, r.totalMs, now).first('r');
+        // Rank without scanning the table: faster buckets + an index range inside our own bucket.
+        const faster = await env.DB.prepare('SELECT COALESCE(SUM(n), 0) AS s FROM score_buckets WHERE bucket < ?')
+          .bind(bucket).first('s');
+        const sameBucket = await env.DB.prepare(
+          'SELECT COUNT(*) AS c FROM scores WHERE total_ms >= ? AND (total_ms < ? OR (total_ms = ? AND created_at < ?))',
+        ).bind(bucket * BUCKET_MS, r.totalMs, r.totalMs, now).first('c');
+        const rank = faster + sameBucket + 1;
         const board = await leaderboard(env, TOP_N);
+        boardCache = { at: Date.now(), limit: TOP_N, body: board };
         return json({ record: { id: runId, ...r }, rank, ...board }, 201);
       }
 
@@ -97,7 +114,7 @@ async function leaderboard(env, limit) {
   const { results } = await env.DB.prepare(
     'SELECT id, player, time_ms, penalty_ms, errors, total_ms, seed FROM scores ORDER BY total_ms ASC, created_at ASC LIMIT ?',
   ).bind(limit).all();
-  const total = await env.DB.prepare('SELECT COUNT(*) AS n FROM scores').first('n');
+  const total = (await env.DB.prepare("SELECT value FROM stats WHERE key = 'total'").first('value')) ?? 0;
   return {
     total,
     top: results.map((row) => ({

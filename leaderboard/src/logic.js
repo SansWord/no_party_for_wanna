@@ -54,3 +54,10 @@ export function clampLimit(raw, def = 10, max = 50) {
   if (!Number.isFinite(n) || n < 1) return def;
   return Math.min(n, max);
 }
+
+export const BUCKET_MS = 100;
+
+/** Bucket index used by the score_buckets rank table. */
+export function bucketOf(totalMs) {
+  return Math.floor(totalMs / BUCKET_MS);
+}

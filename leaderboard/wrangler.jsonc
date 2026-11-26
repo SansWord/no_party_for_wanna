@@ -9,7 +9,7 @@
       "binding": "DB",
       "database_name": "no-party-leaderboard",
       // Replace with the id printed by `npx wrangler d1 create no-party-leaderboard`.
-      "database_id": "00000000-0000-0000-0000-000000000000"
+      "database_id": "9bcba9b8-a661-40f6-8169-6d5447161b1d"
     }
   ],
   "vars": {

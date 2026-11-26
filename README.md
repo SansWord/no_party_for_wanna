@@ -50,7 +50,7 @@ Cloudflare Worker + D1. The server measures each run (start request → finish r
 | Endpoint | Purpose |
 |---|---|
 | `POST /api/runs` | Player pressed 開始計時 → `{ runId }` (rate-limited per hashed IP) |
-| `POST /api/runs/:id/finish` | `{ player, penaltyMs, errors }` → official record, rank, top 10. One finish per run; < 15 s or > 1 h is rejected; `Wanna Talk` is a reserved name |
+| `POST /api/runs/:id/finish` | `{ player, penaltyMs, errors }` → official record, rank, top 10. One finish per run; < 15 s or > 1 h is rejected; `Wanna Talk` is a reserved name. Rank comes from 100 ms `score_buckets` + an index range, and the total from `stats`, so no request scans the scores table (D1 bills per row scanned) |
 | `GET /api/leaderboard?limit=10` | Top list + total |
 
 The game falls back to localStorage (with a notice) when the API is unset, unreachable, or rejects a run.
@@ -74,6 +74,8 @@ npm run db:init:remote
 npx wrangler secret put IP_SALT                  # any random string
 npm run deploy                                   # prints https://no-party-leaderboard.<account>.workers.dev
 ```
+
+Live: `https://no-party-leaderboard.no-party-leaderboard.workers.dev`. Re-run `npm run db:init:remote` after schema changes (idempotent).
 
 Then set the repo variable `LEADERBOARD_API` to that URL (GitHub → Settings → Variables → Actions) and re-run the Pages workflow. `ALLOWED_ORIGINS` in `wrangler.jsonc` must include the Pages origin.
 

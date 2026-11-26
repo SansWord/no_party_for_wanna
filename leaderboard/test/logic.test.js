@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sanitizePlayer, isReservedName, validateFinish, corsOrigin, clampLimit } from '../src/logic.js';
+import { sanitizePlayer, isReservedName, validateFinish, corsOrigin, clampLimit, bucketOf } from '../src/logic.js';
 
 test('sanitizePlayer trims, strips control chars, caps at 20 code points', () => {
   assert.equal(sanitizePlayer('  凱道\u0000快手  '), '凱道快手');
@@ -41,4 +41,10 @@ test('clampLimit', () => {
   assert.equal(clampLimit('5'), 5);
   assert.equal(clampLimit('999'), 50);
   assert.equal(clampLimit('nope'), 10);
+});
+
+test('bucketOf groups totals into 100 ms buckets', () => {
+  assert.equal(bucketOf(330), 3);
+  assert.equal(bucketOf(65_099), 650);
+  assert.equal(bucketOf(65_100), 651);
 });
