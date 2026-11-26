@@ -2,7 +2,10 @@ import {
   isValidTwId, isValidPhone, validateApplication, makeMission, formatDuration, makePersona,
   missionPeriodLabel,
 } from './validators.js';
-import { beginRun, submitResult, getLeaderboardPage, isReservedName, isOnlineConfigured } from './scores.js';
+import {
+  beginRun, submitResult, getLeaderboardPage, getHistogram, sampleNames, isReservedName, isOnlineConfigured,
+  divisionOf, DIVISIONS, SUPREME_MS,
+} from './scores.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -153,7 +156,7 @@ async function finish(caseNo) {
   $('#result-time').textContent = formatDuration(total);
   $('#result-breakdown').innerHTML = '';
   $('#result-rank').textContent = '成績登錄中…';
-  resultBoard.clear();
+  resultPanel.clear();
   showTop('result');
 
   await state.runPromise;
@@ -177,10 +180,9 @@ async function finish(caseNo) {
     ${res.online ? `<dt>本機計時</dt><dd>${formatDuration(total)}</dd>` : ''}
     <dt>模擬案件編號</dt><dd>${caseNo}</dd>`;
   const scope = res.online ? '線上' : '本機';
-  $('#result-rank').textContent = `${scope}排名：第 ${res.rank} 名（共 ${res.total} 筆紀錄）`;
-  $('#result-board-title').textContent = `${scope}排行榜`;
-  $('#result-note').textContent = boardNote(res);
-  resultBoard.show(res.page, res.record.id);
+  const division = res.division || divisionOf(official);
+  $('#result-rank').textContent = `${scope}${DIVISIONS[division]}：第 ${res.rank} 名（共 ${res.total} 筆）`;
+  resultPanel.showResult(res, official, boardNote(res));
   renderBoard();
 }
 
@@ -576,18 +578,58 @@ function boardNote(res) {
   return ERROR_NOTES[res.error] || '線上排行榜暫時無法連線，成績只存在本機。';
 }
 
+// ---------- Leaderboard panels (histogram + 人類組/至尊組 board) ----------
+
+/** Display ranges for the histogram; edges are multiples of the server's 5 s bins. */
+const HISTO_RANGES = [
+  { from: 0, to: SUPREME_MS, label: '20 秒內', division: 'supreme' },
+  { from: 20_000, to: 30_000, label: '20–30 秒' },
+  { from: 30_000, to: 40_000, label: '30–40 秒' },
+  { from: 40_000, to: 50_000, label: '40–50 秒' },
+  { from: 50_000, to: 60_000, label: '50–60 秒' },
+  { from: 60_000, to: 75_000, label: '60–75 秒' },
+  { from: 75_000, to: 90_000, label: '75–90 秒' },
+  { from: 90_000, to: 120_000, label: '1.5–2 分' },
+  { from: 120_000, to: 180_000, label: '2–3 分' },
+  { from: 180_000, to: 300_000, label: '3–5 分' },
+  { from: 300_000, to: 24 * 3600_000, label: '5 分以上' },
+].map((r) => ({ division: 'human', ...r }));
+
+function histogramRows(hist) {
+  const rows = HISTO_RANGES.map((r) => ({ ...r, n: 0 }));
+  for (const b of hist.bins) {
+    const row = rows.find((r) => b.fromMs >= r.from && b.fromMs < r.to);
+    if (row) row.n += b.n;
+  }
+  return rows;
+}
+
 /**
- * A paged leaderboard bound to an <ol> and its pager. `show(page, highlightId)` renders a page
- * from scores.js; the pager buttons fetch neighbouring pages with the page's cursors.
+ * One leaderboard panel: pinned record, tappable histogram (with "你" marker on the result
+ * screen), 人類組/至尊組 tabs and a paged board. Built for touch: every control is a full-width
+ * or ≥44px tap target, nothing depends on hover.
  */
-function makeBoard(ol, pagerName, onPage = () => {}) {
-  const pager = $(`.pager[data-pager="${pagerName}"]`);
+function makePanel(root, { onPage = () => {} } = {}) {
+  const ol = $('[data-board]', root);
+  const pager = $('[data-pager]', root);
   const [firstBtn, prevBtn, nextBtn, lastBtn] = ['first', 'prev', 'next', 'last'].map((d) => $(`[data-dir=${d}]`, pager));
   const info = $('.pager-info', pager);
+  const tabs = $$('[data-div]', root);
+  const histoEl = $('[data-histo]', root);
+  let division = 'human';
   let current = null;
   let highlight = null;
+  let hist = null;
+  let mine = null; // official total ms of the player's own run (result screen)
+  let openRow = null;
 
-  function render(page) {
+  function setTab(div) {
+    division = div;
+    for (const t of tabs) t.setAttribute('aria-selected', String(t.dataset.div === div));
+    root.dataset.division = div;
+  }
+
+  function renderBoard(page) {
     current = page;
     ol.replaceChildren();
     for (const r of page.rows) {
@@ -606,42 +648,148 @@ function makeBoard(ol, pagerName, onPage = () => {}) {
       li.append(no, name, errs, t);
       ol.appendChild(li);
     }
+    if (!page.rows.length) {
+      const li = document.createElement('li');
+      li.className = 'empty';
+      li.textContent = '這組還沒有紀錄';
+      ol.appendChild(li);
+    }
     const first = page.rows[0];
     const last = page.rows.at(-1);
-    info.textContent = first ? `第 ${first.rank}–${last.rank} 名（共 ${page.total} 筆）` : '尚無紀錄';
+    info.textContent = first ? `第 ${first.rank}–${last.rank} 名（共 ${page.total} 筆）` : '';
     firstBtn.disabled = prevBtn.disabled = !page.prev;
     nextBtn.disabled = lastBtn.disabled = !page.next;
-    pager.hidden = !page.prev && !page.next && page.rows.length <= 1;
+    pager.hidden = !page.prev && !page.next;
+    $('[data-board-title]', root).textContent = `${page.online ? '線上' : '本機'}排行榜`;
     onPage(page);
   }
 
   async function go(params) {
     firstBtn.disabled = prevBtn.disabled = nextBtn.disabled = lastBtn.disabled = true;
-    render(await getLeaderboardPage(params));
+    ol.classList.add('loading');
+    try {
+      renderBoard(await getLeaderboardPage({ division, ...params }));
+    } finally {
+      ol.classList.remove('loading');
+    }
   }
 
+  function renderHistogram() {
+    if (!hist) return;
+    const rows = histogramRows(hist);
+    const max = Math.max(1, ...rows.map((r) => r.n));
+    $('[data-histo-total]', root).textContent = `共 ${hist.total} 筆`;
+    const rec = hist.record;
+    const pin = $('[data-record]', root);
+    pin.hidden = !rec;
+    if (rec) pin.textContent = `👑 全站最快：${rec.player}・${formatDuration(rec.timeMs + rec.penaltyMs)}`;
+    histoEl.replaceChildren();
+    for (const r of rows) {
+      const isMine = mine != null && mine >= r.from && mine < r.to;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `histo-row div-${r.division}${isMine ? ' me' : ''}`;
+      btn.setAttribute('aria-expanded', 'false');
+      btn.setAttribute('aria-label', `${r.label}，${r.n} 筆${r.division === 'supreme' ? '，至尊組' : ''}${isMine ? '，你在這裡' : ''}。點一下看暱稱`);
+      btn.innerHTML = `<span class="h-label"></span><span class="h-track"><span class="h-fill"></span></span><span class="h-n"></span>`;
+      $('.h-label', btn).textContent = r.label;
+      $('.h-fill', btn).style.width = r.n ? `max(4px, ${(r.n / max) * 100}%)` : '0';
+      $('.h-n', btn).textContent = `${r.n}${isMine ? ' ◀ 你' : ''}`;
+      const detail = document.createElement('div');
+      detail.className = 'histo-detail';
+      detail.hidden = true;
+      btn.addEventListener('click', () => toggleDetail(btn, detail, r));
+      histoEl.append(btn, detail);
+    }
+  }
+
+  async function toggleDetail(btn, detail, r) {
+    const opening = detail.hidden;
+    if (openRow && openRow.detail !== detail) {
+      openRow.detail.hidden = true;
+      openRow.btn.setAttribute('aria-expanded', 'false');
+    }
+    detail.hidden = !opening;
+    btn.setAttribute('aria-expanded', String(opening));
+    openRow = opening ? { btn, detail } : null;
+    if (!opening) return;
+    if (!r.n) {
+      detail.textContent = '這個區間還沒有人。';
+      return;
+    }
+    const pct = hist.total ? ((r.n / hist.total) * 100).toFixed(1) : '0';
+    detail.innerHTML = `<p class="d-head"></p><p class="d-names">抽樣中…</p><button type="button" class="d-more">🔀 換一批</button>`;
+    $('.d-head', detail).textContent = `${r.label}・${r.n} 筆（${pct}%）${r.division === 'supreme' ? '・至尊組' : ''}`;
+    const load = async () => {
+      const names = $('.d-names', detail);
+      names.textContent = '抽樣中…';
+      const { names: list } = await sampleNames(r.from, r.to, hist.online !== false);
+      names.replaceChildren(...(list.length ? list : ['（沒有暱稱）']).map((n) => {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.textContent = n;
+        return chip;
+      }));
+    };
+    $('.d-more', detail).addEventListener('click', load);
+    load();
+  }
+
+  async function loadHistogram() {
+    hist = await getHistogram();
+    renderHistogram();
+  }
+
+  for (const t of tabs) {
+    t.addEventListener('click', () => {
+      if (t.dataset.div === division) return;
+      setTab(t.dataset.div);
+      go(highlight && divisionOf(mine ?? 0) === division ? { around: highlight } : {});
+    });
+  }
   prevBtn.addEventListener('click', () => current?.prev && go({ before: current.prev }));
   nextBtn.addEventListener('click', () => current?.next && go({ after: current.next }));
   firstBtn.addEventListener('click', () => current?.prev && go({}));
   lastBtn.addEventListener('click', () => current?.next && go({ last: true }));
 
   return {
-    show(page, highlightId = null) { highlight = highlightId; render(page); },
-    load(params = {}, highlightId = null) { highlight = highlightId; return go(params); },
-    clear() { current = null; ol.replaceChildren(); info.textContent = ''; pager.hidden = true; },
+    /** Lobby: histogram + first page of the selected division. */
+    load() {
+      mine = null;
+      highlight = null;
+      return Promise.all([loadHistogram(), go({})]);
+    },
+    /** Result screen: open the player's division on their page, mark them in the histogram. */
+    showResult(res, officialMs, note) {
+      mine = officialMs;
+      highlight = res.record.id;
+      setTab(res.division || divisionOf(officialMs));
+      $('[data-note]', root).textContent = note;
+      renderBoard(res.page);
+      loadHistogram();
+    },
+    clear() {
+      current = null;
+      ol.replaceChildren();
+      info.textContent = '';
+      pager.hidden = true;
+      histoEl.replaceChildren();
+      $('[data-note]', root).textContent = '';
+    },
   };
 }
 
-const lobbyBoard = makeBoard($('#local-board'), 'lobby', (page) => {
-  $('#lobby-board-title').textContent = page.online ? '線上排行榜' : '本機排行榜';
-  $('#lobby-board-note').textContent = page.online
-    ? '伺服器計時。'
-    : isOnlineConfigured() ? '線上排行榜暫時無法連線，顯示本機紀錄。' : '成績只存在你的瀏覽器。';
+const lobbyPanel = makePanel($('[data-panel=lobby]'), {
+  onPage: (page) => {
+    $('[data-panel=lobby] [data-note]').textContent = page.online
+      ? '伺服器計時。20 秒內完成的歸入至尊組。'
+      : isOnlineConfigured() ? '線上排行榜暫時無法連線，顯示本機紀錄。' : '成績只存在你的瀏覽器。';
+  },
 });
-const resultBoard = makeBoard($('#result-board'), 'result');
+const resultPanel = makePanel($('[data-panel=result]'));
 
 function renderBoard() {
-  return lobbyBoard.load();
+  return lobbyPanel.load();
 }
 
 function initLobby() {

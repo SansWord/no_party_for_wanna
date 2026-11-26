@@ -32,7 +32,7 @@ export function isReservedName(name) {
  * @typedef {ScoreRecord & { rank: number }} RankedRow
  * @typedef {{ online: boolean, rows: RankedRow[], total: number, prev: string|null, next: string|null }} Page
  *   prev/next are opaque cursors for getLeaderboardPage({ before }) / ({ after }).
- * @typedef {{ online: boolean, record: ScoreRecord, rank: number, total: number, page: Page, error?: string }} SubmitResult
+ * @typedef {{ online: boolean, record: ScoreRecord, division: 'human'|'supreme', rank: number, total: number, page: Page, error?: string }} SubmitResult
  */
 
 function apiBase() {
@@ -58,6 +58,15 @@ async function api(path, options = {}) {
   return body;
 }
 
+// ---------- Divisions ----------
+/** 至尊組: total < 20 s. 人類組: total ≥ 20 s. (Matches SUPREME_MS in the Worker.) */
+export const SUPREME_MS = 20_000;
+export const DIVISIONS = { human: '人類組', supreme: '至尊組' };
+const total = (r) => r.timeMs + r.penaltyMs;
+export function divisionOf(totalMs) {
+  return totalMs < SUPREME_MS ? 'supreme' : 'human';
+}
+
 // ---------- Local fallback ----------
 function readAll() {
   try {
@@ -67,40 +76,71 @@ function readAll() {
   }
 }
 
-function localRanked() {
+function localRanked(division = null) {
   return [...SEED_RECORDS, ...readAll()]
     .filter((r) => r.success !== false)
-    .sort((a, b) => a.timeMs + a.penaltyMs - (b.timeMs + b.penaltyMs));
+    .filter((r) => !division || divisionOf(total(r)) === division)
+    .sort((a, b) => total(a) - total(b));
 }
 
-/** Slice of the local ranking starting at 0-based index `start`; cursors are 1-based ranks. */
-function localPage(start, limit = TOP_N) {
-  const ranked = localRanked();
+/** Slice of the local ranking starting at 0-based index `start`; cursors are "L<division>:<rank>". */
+function localPage(start, division = null, limit = TOP_N) {
+  const ranked = localRanked(division);
   const from = Math.max(0, Math.min(start, Math.max(0, ranked.length - 1)));
   const rows = ranked.slice(from, from + limit).map((r, i) => ({ ...r, rank: from + i + 1 }));
   const last = rows.at(-1);
+  const tag = `L${division || ''}:`;
   return {
     online: false,
+    division,
     total: ranked.length,
     rows,
-    prev: from > 0 ? `L${from + 1}` : null,
-    next: last && last.rank < ranked.length ? `L${last.rank}` : null,
+    prev: from > 0 ? `${tag}${from + 1}` : null,
+    next: last && last.rank < ranked.length ? `${tag}${last.rank}` : null,
   };
 }
 
 /** Page containing a record, aligned to fixed pages (rank 33 → ranks 31–40). */
-function localPageAround(id, limit = TOP_N) {
-  const idx = localRanked().findIndex((r) => r.id === id);
-  return localPage(idx < 0 ? 0 : idx - (idx % limit), limit);
+function localPageAround(id, division = null, limit = TOP_N) {
+  const idx = localRanked(division).findIndex((r) => r.id === id);
+  return localPage(idx < 0 ? 0 : idx - (idx % limit), division, limit);
 }
 
 function localSubmit(record) {
   const all = readAll();
   all.push(record);
   localStorage.setItem(KEY, JSON.stringify(all.slice(-200)));
+  const division = divisionOf(total(record));
+  const ranked = localRanked(division);
+  const page = localPageAround(record.id, division);
+  return { online: false, record, division, rank: ranked.findIndex((r) => r.id === record.id) + 1, total: ranked.length, page };
+}
+
+function localHistogram() {
   const ranked = localRanked();
-  const page = localPageAround(record.id);
-  return { online: false, record, rank: ranked.findIndex((r) => r.id === record.id) + 1, total: ranked.length, page };
+  const bins = new Map();
+  for (const r of ranked) {
+    const b = Math.floor(total(r) / 5000);
+    bins.set(b, (bins.get(b) || 0) + 1);
+  }
+  const best = ranked[0];
+  return {
+    online: false,
+    total: ranked.length,
+    supremeMs: SUPREME_MS,
+    binMs: 5000,
+    bins: [...bins].sort((a, b) => a[0] - b[0]).map(([b, n]) => ({ fromMs: b * 5000, toMs: (b + 1) * 5000, n })),
+    record: best ? { player: best.player, timeMs: best.timeMs, penaltyMs: best.penaltyMs, errors: best.errors } : null,
+  };
+}
+
+function localSample(from, to) {
+  const pool = [...new Set(localRanked().filter((r) => total(r) >= from && total(r) < to).map((r) => r.player))];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return { names: pool.slice(0, 5) };
 }
 
 // ---------- Public API ----------
@@ -118,7 +158,8 @@ export async function beginRun() {
 }
 
 /**
- * Submit a finished run. Online: the server measures the time and returns the official record.
+ * Submit a finished run. Online: the server measures the time and returns the official record,
+ * the player's division, their rank within it, and the aligned page around them.
  * @returns {Promise<SubmitResult>}
  */
 export async function submitResult(record, run) {
@@ -128,12 +169,14 @@ export async function submitResult(record, run) {
         method: 'POST',
         body: JSON.stringify({ player: record.player, penaltyMs: record.penaltyMs, errors: record.errors }),
       });
+      const division = res.division || divisionOf(res.record.totalMs);
       return {
         online: true,
         record: { ...res.record, caseNo: record.caseNo },
+        division,
         rank: res.rank,
         total: res.total,
-        page: { online: true, ...res.page },
+        page: { online: true, division, ...res.page },
       };
     } catch (err) {
       console.warn('[leaderboard] finish failed, saved locally', err);
@@ -144,32 +187,56 @@ export async function submitResult(record, run) {
 }
 
 /**
- * One page of the leaderboard. Pass nothing for the first page, `{ after }` / `{ before }`
- * with a cursor from a previous page, or `{ around: id }` for the page containing a record.
- * `{ last: true }` gives the last page. Pages are aligned to ranks 10n+1. Cursors from the
- * local fallback start with "L".
+ * One page of a division's leaderboard (`division`: 'human' | 'supreme'). Pass nothing else for
+ * the first page, `{ after }` / `{ before }` with a cursor from a previous page, `{ around: id }`
+ * for the page containing a record, or `{ last: true }`. Pages are aligned to ranks 10n+1.
  * @returns {Promise<Page>}
  */
-export async function getLeaderboardPage({ after, before, around, last } = {}) {
+export async function getLeaderboardPage({ division = 'human', after, before, around, last } = {}) {
   const local = (after && after.startsWith('L')) || (before && before.startsWith('L'));
   if (apiBase() && !local) {
     try {
-      const q = new URLSearchParams({ limit: String(TOP_N) });
+      const q = new URLSearchParams({ limit: String(TOP_N), division });
       if (after) q.set('after', after);
       else if (before) q.set('before', before);
       else if (around) q.set('around', around);
       else if (last) q.set('last', '1');
-      return { online: true, ...(await api(`/api/leaderboard?${q}`)) };
+      return { online: true, division, ...(await api(`/api/leaderboard?${q}`)) };
     } catch (err) {
       console.warn('[leaderboard] fetch failed, showing local', err);
     }
   }
-  if (after) return localPage(Number(after.slice(1)));
-  if (before) return localPage(Math.max(0, Number(before.slice(1)) - 1 - TOP_N));
-  if (around) return localPageAround(around);
+  const rankOf = (cursor) => Number(cursor.split(':')[1]);
+  if (after) return localPage(rankOf(after), division);
+  if (before) return localPage(Math.max(0, rankOf(before) - 1 - TOP_N), division);
+  if (around) return localPageAround(around, division);
   if (last) {
-    const total = localRanked().length;
-    return localPage(Math.floor(Math.max(0, total - 1) / TOP_N) * TOP_N);
+    const n = localRanked(division).length;
+    return localPage(Math.floor(Math.max(0, n - 1) / TOP_N) * TOP_N, division);
   }
-  return localPage(0);
+  return localPage(0, division);
+}
+
+/** Finish-time distribution in 5 s bins, plus the #1 record. */
+export async function getHistogram() {
+  if (apiBase()) {
+    try {
+      return { online: true, ...(await api('/api/histogram')) };
+    } catch (err) {
+      console.warn('[leaderboard] histogram failed, showing local', err);
+    }
+  }
+  return localHistogram();
+}
+
+/** ≈5 random nicknames with a finish time in [fromMs, toMs). */
+export async function sampleNames(fromMs, toMs, online = true) {
+  if (apiBase() && online) {
+    try {
+      return await api(`/api/histogram/sample?from=${fromMs}&to=${toMs}`);
+    } catch (err) {
+      console.warn('[leaderboard] sample failed', err);
+    }
+  }
+  return localSample(fromMs, toMs);
 }

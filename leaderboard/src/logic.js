@@ -142,3 +142,25 @@ export function parseBody(text) {
     return null;
   }
 }
+
+// ---------- Divisions ----------
+// 至尊組 (supreme): total < SUPREME_MS. 人類組 (human): total >= SUPREME_MS.
+// Must be a multiple of COARSE_MS so the division sizes come straight from coarse buckets.
+export const SUPREME_MS = 20_000;
+export const SUPREME_COARSE = SUPREME_MS / COARSE_MS;
+
+export function parseDivision(raw) {
+  return raw === 'human' || raw === 'supreme' ? raw : null;
+}
+
+export function divisionOf(totalMs) {
+  return totalMs < SUPREME_MS ? 'supreme' : 'human';
+}
+
+/** Validate a [from, to) ms range for nickname sampling. */
+export function parseRange(fromRaw, toRaw) {
+  const from = Number.parseInt(fromRaw, 10);
+  const to = Number.parseInt(toRaw, 10);
+  if (!Number.isFinite(from) || !Number.isFinite(to) || from < 0 || to <= from || to - from > 24 * 3600_000) return null;
+  return { from, to };
+}

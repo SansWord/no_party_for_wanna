@@ -83,3 +83,18 @@ test('parseBody accepts JSON text and rejects junk', () => {
   assert.equal(parseBody('nope'), null);
   assert.equal(parseBody('3'), null);
 });
+
+import { SUPREME_MS, SUPREME_COARSE, parseDivision, divisionOf, parseRange } from '../src/logic.js';
+
+test('divisions split at 20 s on a coarse-bucket boundary', () => {
+  assert.equal(SUPREME_MS % 5000, 0);
+  assert.equal(SUPREME_COARSE, 4);
+  assert.equal(divisionOf(350), 'supreme');
+  assert.equal(divisionOf(19_999), 'supreme');
+  assert.equal(divisionOf(20_000), 'human');
+  assert.equal(parseDivision('human'), 'human');
+  assert.equal(parseDivision('x'), null);
+  assert.deepEqual(parseRange('15000', '20000'), { from: 15000, to: 20000 });
+  assert.equal(parseRange('20000', '15000'), null);
+  assert.equal(parseRange('a', '1'), null);
+});

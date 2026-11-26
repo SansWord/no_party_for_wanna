@@ -85,11 +85,20 @@
         </ul>
       </details>
 
-      <section class="lobby-board">
-        <h2 id="lobby-board-title">排行榜</h2>
-        <ol id="local-board" class="board"></ol>
-        <div class="pager" data-pager="lobby"><span class="pager-group"><button type="button" data-dir="first">« 第一頁</button><button type="button" data-dir="prev">‹ 上一頁</button></span><span class="pager-info"></span><span class="pager-group"><button type="button" data-dir="next">下一頁 ›</button><button type="button" data-dir="last">最後一頁 »</button></span></div>
-        <p class="board-note" id="lobby-board-note"></p>
+      <section class="board-panel" data-panel="lobby">
+        <p class="record-pin" data-record hidden></p>
+        <h2 class="panel-h">成績分布 <small data-histo-total></small></h2>
+        <p class="histo-hint">點長條看看是哪些人。</p>
+        <div class="histo" data-histo></div>
+        <p class="histo-legend"><span class="sw sw-supreme"></span>至尊組（20 秒內）<span class="sw sw-human"></span>人類組（20 秒以上）</p>
+        <h2 class="panel-h"><span data-board-title>排行榜</span></h2>
+        <div class="seg" role="tablist" aria-label="組別">
+          <button type="button" role="tab" data-div="human" aria-selected="true">人類組<small>20 秒以上</small></button>
+          <button type="button" role="tab" data-div="supreme" aria-selected="false">至尊組<small>20 秒內</small></button>
+        </div>
+        <ol class="board" data-board></ol>
+        <div class="pager" data-pager><span class="pager-group"><button type="button" data-dir="first">« 第一頁</button><button type="button" data-dir="prev">‹ 上一頁</button></span><span class="pager-info"></span><span class="pager-group"><button type="button" data-dir="next">下一頁 ›</button><button type="button" data-dir="last">最後一頁 »</button></span></div>
+        <p class="board-note" data-note></p>
       </section>
     </div>
     <p class="disclaimer">本網站為模擬遊戲，與臺北市政府無關，不會送出任何真實申請。實際申請請洽官方平台。</p>
@@ -313,11 +322,20 @@
       <p class="result-time" id="result-time"></p>
       <dl class="result-breakdown" id="result-breakdown"></dl>
       <p id="result-rank" class="result-rank"></p>
-      <section class="result-board">
-        <h2 id="result-board-title">排行榜</h2>
-        <ol id="result-board" class="board"></ol>
-        <div class="pager" data-pager="result"><span class="pager-group"><button type="button" data-dir="first">« 第一頁</button><button type="button" data-dir="prev">‹ 上一頁</button></span><span class="pager-info"></span><span class="pager-group"><button type="button" data-dir="next">下一頁 ›</button><button type="button" data-dir="last">最後一頁 »</button></span></div>
-        <p class="board-note" id="result-note"></p>
+      <section class="board-panel" data-panel="result">
+        <p class="record-pin" data-record hidden></p>
+        <h2 class="panel-h">成績分布 <small data-histo-total></small></h2>
+        <p class="histo-hint">點長條看看是哪些人。</p>
+        <div class="histo" data-histo></div>
+        <p class="histo-legend"><span class="sw sw-supreme"></span>至尊組（20 秒內）<span class="sw sw-human"></span>人類組（20 秒以上）</p>
+        <h2 class="panel-h"><span data-board-title>排行榜</span></h2>
+        <div class="seg" role="tablist" aria-label="組別">
+          <button type="button" role="tab" data-div="human" aria-selected="true">人類組<small>20 秒以上</small></button>
+          <button type="button" role="tab" data-div="supreme" aria-selected="false">至尊組<small>20 秒內</small></button>
+        </div>
+        <ol class="board" data-board></ol>
+        <div class="pager" data-pager><span class="pager-group"><button type="button" data-dir="first">« 第一頁</button><button type="button" data-dir="prev">‹ 上一頁</button></span><span class="pager-info"></span><span class="pager-group"><button type="button" data-dir="next">下一頁 ›</button><button type="button" data-dir="last">最後一頁 »</button></span></div>
+        <p class="board-note" data-note></p>
       </section>
       <div class="actions center">
         <button type="button" class="btn-start" id="btn-again">再挑戰一次</button>
