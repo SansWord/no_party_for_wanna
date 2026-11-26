@@ -1,16 +1,21 @@
 // Cloudflare Worker: online leaderboard for 借用凱達格蘭大道大作戰.
 //
 //   POST /api/runs               → { runId }                 (player pressed 開始計時)
-//   POST /api/runs/:id/finish    → { record, rank, total, top }
-//   GET  /api/leaderboard        → { top, total }
+//   POST /api/runs/:id/finish    → { record, rank, total, page }   (page = rows around the player)
+//   GET  /api/leaderboard        → page: first page, or ?after=<cursor> / ?before=<cursor> / ?around=<id>
+//
+// A page is { total, rows: [{ rank, ... }], prev, next } with keyset cursors, so every page
+// reads only `limit` rows from the index (no OFFSET, which D1 would bill row by row).
 //
 // The server measures the run time (finish − start), so a client can't just post a fake time.
 
-import { validateFinish, corsOrigin, clampLimit, bucketOf, BUCKET_MS, STARTS_PER_MINUTE } from './logic.js';
+import {
+  validateFinish, corsOrigin, clampLimit, bucketOf, BUCKET_MS, STARTS_PER_MINUTE, encodeCursor, decodeCursor,
+} from './logic.js';
 
 const TOP_N = 10;
 const BOARD_CACHE_MS = 10_000;
-let boardCache = null; // per-isolate cache for GET /api/leaderboard: { at, limit, body }
+let boardCache = null; // per-isolate cache for the first leaderboard page: { at, limit, body }
 
 export default {
   async fetch(request, env) {
@@ -39,8 +44,15 @@ export default {
     try {
       if (request.method === 'GET' && path === '/api/leaderboard') {
         const limit = clampLimit(url.searchParams.get('limit'), TOP_N);
+        const q = url.searchParams;
+        if (q.has('after') || q.has('before')) {
+          const cursor = decodeCursor(q.get('after') ?? q.get('before'));
+          if (!cursor) return json({ error: 'bad_cursor' }, 400);
+          return json(await pageFrom(env, cursor, q.has('after') ? 'after' : 'before', limit));
+        }
+        if (q.has('around')) return json(await pageAround(env, q.get('around'), limit));
         if (!boardCache || boardCache.limit !== limit || Date.now() - boardCache.at > BOARD_CACHE_MS) {
-          boardCache = { at: Date.now(), limit, body: await leaderboard(env, limit) };
+          boardCache = { at: Date.now(), limit, body: await firstPage(env, limit) };
         }
         return json(boardCache.body);
       }
@@ -90,16 +102,10 @@ export default {
             .bind(bucket),
         ]);
 
-        // Rank without scanning the table: faster buckets + an index range inside our own bucket.
-        const faster = await env.DB.prepare('SELECT COALESCE(SUM(n), 0) AS s FROM score_buckets WHERE bucket < ?')
-          .bind(bucket).first('s');
-        const sameBucket = await env.DB.prepare(
-          'SELECT COUNT(*) AS c FROM scores WHERE total_ms >= ? AND (total_ms < ? OR (total_ms = ? AND created_at < ?))',
-        ).bind(bucket * BUCKET_MS, r.totalMs, r.totalMs, now).first('c');
-        const rank = faster + sameBucket + 1;
-        const board = await leaderboard(env, TOP_N);
-        boardCache = { at: Date.now(), limit: TOP_N, body: board };
-        return json({ record: { id: runId, ...r }, rank, ...board }, 201);
+        boardCache = null;
+        const rank = await rankOf(env, r.totalMs, now);
+        const page = await pageAroundRow(env, { total_ms: r.totalMs, created_at: now }, rank, TOP_N);
+        return json({ record: { id: runId, ...r }, rank, total: page.total, page }, 201);
       }
 
       return json({ error: 'not_found' }, 404);
@@ -110,22 +116,82 @@ export default {
   },
 };
 
-async function leaderboard(env, limit) {
+const COLS = 'id, player, time_ms, penalty_ms, errors, total_ms, created_at, seed';
+
+async function totalCount(env) {
+  return (await env.DB.prepare("SELECT value FROM stats WHERE key = 'total'").first('value')) ?? 0;
+}
+
+/** Rank without scanning the table: faster 100 ms buckets + an index range inside our own bucket. */
+async function rankOf(env, totalMs, createdAt) {
+  const bucket = bucketOf(totalMs);
+  const faster = await env.DB.prepare('SELECT COALESCE(SUM(n), 0) AS s FROM score_buckets WHERE bucket < ?')
+    .bind(bucket).first('s');
+  const sameBucket = await env.DB.prepare(
+    'SELECT COUNT(*) AS c FROM scores WHERE total_ms >= ? AND (total_ms, created_at) < (?, ?)',
+  ).bind(bucket * BUCKET_MS, totalMs, createdAt).first('c');
+  return faster + sameBucket + 1;
+}
+
+async function rowsAfter(env, key, limit, inclusive = false) {
+  const op = inclusive ? '>=' : '>';
   const { results } = await env.DB.prepare(
-    'SELECT id, player, time_ms, penalty_ms, errors, total_ms, seed FROM scores ORDER BY total_ms ASC, created_at ASC LIMIT ?',
-  ).bind(limit).all();
-  const total = (await env.DB.prepare("SELECT value FROM stats WHERE key = 'total'").first('value')) ?? 0;
+    `SELECT ${COLS} FROM scores WHERE (total_ms, created_at) ${op} (?, ?) ORDER BY total_ms, created_at LIMIT ?`,
+  ).bind(key.total_ms, key.created_at, limit).all();
+  return results;
+}
+
+async function rowsBefore(env, key, limit) {
+  const { results } = await env.DB.prepare(
+    `SELECT ${COLS} FROM scores WHERE (total_ms, created_at) < (?, ?) ORDER BY total_ms DESC, created_at DESC LIMIT ?`,
+  ).bind(key.total_ms, key.created_at, limit).all();
+  return results.reverse();
+}
+
+function toPage(rows, firstRank, total) {
+  const out = rows.map((row, i) => ({
+    rank: firstRank + i,
+    id: row.id,
+    player: row.player,
+    timeMs: row.time_ms,
+    penaltyMs: row.penalty_ms,
+    errors: row.errors,
+    seed: !!row.seed,
+  }));
+  const last = out.at(-1);
   return {
     total,
-    top: results.map((row) => ({
-      id: row.id,
-      player: row.player,
-      timeMs: row.time_ms,
-      penaltyMs: row.penalty_ms,
-      errors: row.errors,
-      seed: !!row.seed,
-    })),
+    rows: out,
+    prev: out.length && firstRank > 1 ? encodeCursor(rows[0], firstRank) : null,
+    next: last && last.rank < total ? encodeCursor(rows.at(-1), last.rank) : null,
   };
+}
+
+async function firstPage(env, limit) {
+  const { results } = await env.DB.prepare(`SELECT ${COLS} FROM scores ORDER BY total_ms, created_at LIMIT ?`)
+    .bind(limit).all();
+  return toPage(results, 1, await totalCount(env));
+}
+
+async function pageFrom(env, cursor, dir, limit) {
+  const key = { total_ms: cursor.totalMs, created_at: cursor.createdAt };
+  const total = await totalCount(env);
+  if (dir === 'after') return toPage(await rowsAfter(env, key, limit), cursor.rank + 1, total);
+  const rows = await rowsBefore(env, key, Math.min(limit, cursor.rank - 1));
+  return toPage(rows, cursor.rank - rows.length, total);
+}
+
+/** Page containing a row: up to half a page of faster rows, the row itself, then slower rows. */
+async function pageAroundRow(env, key, rank, limit) {
+  const before = await rowsBefore(env, key, Math.min(Math.floor((limit - 1) / 2), rank - 1));
+  const from = await rowsAfter(env, key, limit - before.length, true);
+  return toPage([...before, ...from], rank - before.length, await totalCount(env));
+}
+
+async function pageAround(env, id, limit) {
+  const row = await env.DB.prepare('SELECT total_ms, created_at FROM scores WHERE id = ?').bind(String(id)).first();
+  if (!row) return firstPage(env, limit);
+  return pageAroundRow(env, row, await rankOf(env, row.total_ms, row.created_at), limit);
 }
 
 async function hashIp(ip, salt) {

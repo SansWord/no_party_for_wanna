@@ -2,7 +2,7 @@ import {
   isValidTwId, isValidPhone, validateApplication, makeMission, formatDuration, makePersona,
   missionPeriodLabel,
 } from './validators.js';
-import { beginRun, submitResult, getLeaderboard, isReservedName, isOnlineConfigured } from './scores.js';
+import { beginRun, submitResult, getLeaderboardPage, isReservedName, isOnlineConfigured } from './scores.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -153,7 +153,7 @@ async function finish(caseNo) {
   $('#result-time').textContent = formatDuration(total);
   $('#result-breakdown').innerHTML = '';
   $('#result-rank').textContent = '成績登錄中…';
-  $('#result-board').replaceChildren();
+  resultBoard.clear();
   showTop('result');
 
   await state.runPromise;
@@ -180,7 +180,7 @@ async function finish(caseNo) {
   $('#result-rank').textContent = `${scope}排名：第 ${res.rank} 名（共 ${res.total} 筆紀錄）`;
   $('#result-board-title').textContent = `${scope}排行榜`;
   $('#result-note').textContent = boardNote(res);
-  renderBoardInto($('#result-board'), res.top, { record: res.record, rank: res.rank });
+  resultBoard.show(res.page, res.record.id);
   renderBoard();
 }
 
@@ -541,40 +541,69 @@ function boardNote(res) {
 }
 
 /**
- * Render the top list. `current` ({ record, rank }) is highlighted, or appended after a
- * gap when it falls outside the list.
+ * A paged leaderboard bound to an <ol> and its pager. `show(page, highlightId)` renders a page
+ * from scores.js; the pager buttons fetch neighbouring pages with the page's cursors.
  */
-function renderBoardInto(ol, top, current = null) {
-  ol.replaceChildren();
-  const rows = top.map((r, i) => [i + 1, r]);
-  const inList = current && top.some((r) => r.id === current.record.id);
-  if (current && !inList) rows.push(['…', null], [current.rank, current.record]);
-  for (const [rank, r] of rows) {
-    const li = document.createElement('li');
-    if (!r) { li.className = 'gap'; li.textContent = '…'; ol.appendChild(li); continue; }
-    if (current && r.id === current.record.id) li.className = 'me';
-    const no = document.createElement('span');
-    no.className = 'rank';
-    no.textContent = rank;
-    const name = document.createElement('span');
-    name.className = 'who';
-    name.textContent = r.player;
-    const errs = document.createElement('small');
-    errs.textContent = r.errors ? `錯 ${r.errors}` : '零失誤';
-    const t = document.createElement('b');
-    t.textContent = formatDuration(r.timeMs + r.penaltyMs);
-    li.append(no, name, errs, t);
-    ol.appendChild(li);
+function makeBoard(ol, pagerName, onPage = () => {}) {
+  const pager = $(`.pager[data-pager="${pagerName}"]`);
+  const [prevBtn, nextBtn] = [$('[data-dir=prev]', pager), $('[data-dir=next]', pager)];
+  const info = $('.pager-info', pager);
+  let current = null;
+  let highlight = null;
+
+  function render(page) {
+    current = page;
+    ol.replaceChildren();
+    for (const r of page.rows) {
+      const li = document.createElement('li');
+      if (highlight && r.id === highlight) li.className = 'me';
+      const no = document.createElement('span');
+      no.className = 'rank';
+      no.textContent = r.rank;
+      const name = document.createElement('span');
+      name.className = 'who';
+      name.textContent = r.player;
+      const errs = document.createElement('small');
+      errs.textContent = r.errors ? `錯 ${r.errors}` : '零失誤';
+      const t = document.createElement('b');
+      t.textContent = formatDuration(r.timeMs + r.penaltyMs);
+      li.append(no, name, errs, t);
+      ol.appendChild(li);
+    }
+    const first = page.rows[0];
+    const last = page.rows.at(-1);
+    info.textContent = first ? `第 ${first.rank}–${last.rank} 名（共 ${page.total} 筆）` : '尚無紀錄';
+    prevBtn.disabled = !page.prev;
+    nextBtn.disabled = !page.next;
+    pager.hidden = !page.prev && !page.next && page.rows.length <= 1;
+    onPage(page);
   }
+
+  async function go(params) {
+    prevBtn.disabled = nextBtn.disabled = true;
+    render(await getLeaderboardPage(params));
+  }
+
+  prevBtn.addEventListener('click', () => current?.prev && go({ before: current.prev }));
+  nextBtn.addEventListener('click', () => current?.next && go({ after: current.next }));
+
+  return {
+    show(page, highlightId = null) { highlight = highlightId; render(page); },
+    load(params = {}, highlightId = null) { highlight = highlightId; return go(params); },
+    clear() { current = null; ol.replaceChildren(); info.textContent = ''; pager.hidden = true; },
+  };
 }
 
-async function renderBoard() {
-  const board = await getLeaderboard();
-  $('#lobby-board-title').textContent = board.online ? '線上排行榜' : '本機排行榜';
-  $('#lobby-board-note').textContent = board.online
-    ? `共 ${board.total} 筆紀錄，伺服器計時。`
+const lobbyBoard = makeBoard($('#local-board'), 'lobby', (page) => {
+  $('#lobby-board-title').textContent = page.online ? '線上排行榜' : '本機排行榜';
+  $('#lobby-board-note').textContent = page.online
+    ? '伺服器計時。'
     : isOnlineConfigured() ? '線上排行榜暫時無法連線，顯示本機紀錄。' : '成績只存在你的瀏覽器。';
-  renderBoardInto($('#local-board'), board.top);
+});
+const resultBoard = makeBoard($('#result-board'), 'result');
+
+function renderBoard() {
+  return lobbyBoard.load();
 }
 
 function initLobby() {

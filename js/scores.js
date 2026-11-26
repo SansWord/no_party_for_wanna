@@ -29,8 +29,10 @@ export function isReservedName(name) {
 /**
  * @typedef {{ id: string, player: string, timeMs: number, penaltyMs: number, errors: number,
  *             success?: boolean, caseNo?: string|null, at?: string, seed?: boolean }} ScoreRecord
- * @typedef {{ online: boolean, top: ScoreRecord[], total: number }} Board
- * @typedef {Board & { record: ScoreRecord, rank: number, error?: string }} SubmitResult
+ * @typedef {ScoreRecord & { rank: number }} RankedRow
+ * @typedef {{ online: boolean, rows: RankedRow[], total: number, prev: string|null, next: string|null }} Page
+ *   prev/next are opaque cursors for getLeaderboardPage({ before }) / ({ after }).
+ * @typedef {{ online: boolean, record: ScoreRecord, rank: number, total: number, page: Page, error?: string }} SubmitResult
  */
 
 function apiBase() {
@@ -69,18 +71,33 @@ function localRanked() {
     .sort((a, b) => a.timeMs + a.penaltyMs - (b.timeMs + b.penaltyMs));
 }
 
+/** Slice of the local ranking starting at 0-based index `start`; cursors are 1-based ranks. */
+function localPage(start, limit = TOP_N) {
+  const ranked = localRanked();
+  const from = Math.max(0, Math.min(start, Math.max(0, ranked.length - 1)));
+  const rows = ranked.slice(from, from + limit).map((r, i) => ({ ...r, rank: from + i + 1 }));
+  const last = rows.at(-1);
+  return {
+    online: false,
+    total: ranked.length,
+    rows,
+    prev: from > 0 ? `L${from + 1}` : null,
+    next: last && last.rank < ranked.length ? `L${last.rank}` : null,
+  };
+}
+
+function localPageAround(id, limit = TOP_N) {
+  const idx = localRanked().findIndex((r) => r.id === id);
+  return localPage(idx < 0 ? 0 : Math.max(0, idx - Math.floor((limit - 1) / 2)), limit);
+}
+
 function localSubmit(record) {
   const all = readAll();
   all.push(record);
   localStorage.setItem(KEY, JSON.stringify(all.slice(-200)));
   const ranked = localRanked();
-  return {
-    online: false,
-    record,
-    rank: ranked.findIndex((r) => r.id === record.id) + 1,
-    total: ranked.length,
-    top: ranked.slice(0, TOP_N),
-  };
+  const page = localPageAround(record.id);
+  return { online: false, record, rank: ranked.findIndex((r) => r.id === record.id) + 1, total: ranked.length, page };
 }
 
 // ---------- Public API ----------
@@ -108,7 +125,13 @@ export async function submitResult(record, run) {
         method: 'POST',
         body: JSON.stringify({ player: record.player, penaltyMs: record.penaltyMs, errors: record.errors }),
       });
-      return { online: true, record: { ...res.record, caseNo: record.caseNo }, rank: res.rank, total: res.total, top: res.top };
+      return {
+        online: true,
+        record: { ...res.record, caseNo: record.caseNo },
+        rank: res.rank,
+        total: res.total,
+        page: { online: true, ...res.page },
+      };
     } catch (err) {
       console.warn('[leaderboard] finish failed, saved locally', err);
       return { ...localSubmit(record), error: err.code || 'network' };
@@ -117,16 +140,27 @@ export async function submitResult(record, run) {
   return { ...localSubmit(record), error: apiBase() ? 'not_started' : undefined };
 }
 
-/** @returns {Promise<Board>} */
-export async function getLeaderboard() {
-  if (apiBase()) {
+/**
+ * One page of the leaderboard. Pass nothing for the first page, `{ after }` / `{ before }`
+ * with a cursor from a previous page, or `{ around: id }` for the page containing a record.
+ * Cursors from the local fallback start with "L".
+ * @returns {Promise<Page>}
+ */
+export async function getLeaderboardPage({ after, before, around } = {}) {
+  const local = (after && after.startsWith('L')) || (before && before.startsWith('L'));
+  if (apiBase() && !local) {
     try {
-      const res = await api(`/api/leaderboard?limit=${TOP_N}`);
-      return { online: true, top: res.top, total: res.total };
+      const q = new URLSearchParams({ limit: String(TOP_N) });
+      if (after) q.set('after', after);
+      else if (before) q.set('before', before);
+      else if (around) q.set('around', around);
+      return { online: true, ...(await api(`/api/leaderboard?${q}`)) };
     } catch (err) {
       console.warn('[leaderboard] fetch failed, showing local', err);
     }
   }
-  const ranked = localRanked();
-  return { online: false, top: ranked.slice(0, TOP_N), total: ranked.length };
+  if (after) return localPage(Number(after.slice(1)));
+  if (before) return localPage(Math.max(0, Number(before.slice(1)) - 1 - TOP_N));
+  if (around) return localPageAround(around);
+  return localPage(0);
 }

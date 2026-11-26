@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sanitizePlayer, isReservedName, validateFinish, corsOrigin, clampLimit, bucketOf } from '../src/logic.js';
+import { sanitizePlayer, isReservedName, validateFinish, corsOrigin, clampLimit, bucketOf, encodeCursor, decodeCursor } from '../src/logic.js';
 
 test('sanitizePlayer trims, strips control chars, caps at 20 code points', () => {
   assert.equal(sanitizePlayer('  凱道\u0000快手  '), '凱道快手');
@@ -47,4 +47,11 @@ test('bucketOf groups totals into 100 ms buckets', () => {
   assert.equal(bucketOf(330), 3);
   assert.equal(bucketOf(65_099), 650);
   assert.equal(bucketOf(65_100), 651);
+});
+
+test('cursor round-trips and rejects junk', () => {
+  const c = encodeCursor({ total_ms: 65000, created_at: 1795651200000 }, 12);
+  assert.equal(c, '65000_1795651200000_12');
+  assert.deepEqual(decodeCursor(c), { totalMs: 65000, createdAt: 1795651200000, rank: 12 });
+  for (const bad of ['', 'x', '1_2', '1_2_0', '1_2_3;DROP', null, undefined]) assert.equal(decodeCursor(bad), null);
 });

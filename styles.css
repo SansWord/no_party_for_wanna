@@ -271,3 +271,10 @@ select.is-mission { border-color: #1a9b4b !important; background: #effaf2; box-s
   .hud-stats span, .hud-quit { white-space: nowrap; }
   .hud-quit { padding: 4px 8px; font-size: 12px; margin-left: auto; }
 }
+
+/* ===== Leaderboard pager ===== */
+.pager { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; font-size: 13px; }
+.pager button { background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 4px 12px; color: var(--brand-dark); }
+.pager button:hover:not(:disabled) { border-color: var(--brand); }
+.pager button:disabled { opacity: .4; cursor: default; }
+.pager-info { color: var(--muted); font-variant-numeric: tabular-nums; }

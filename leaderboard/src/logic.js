@@ -61,3 +61,19 @@ export const BUCKET_MS = 100;
 export function bucketOf(totalMs) {
   return Math.floor(totalMs / BUCKET_MS);
 }
+
+/**
+ * Keyset-pagination cursor: "<total_ms>_<created_at>_<rank>". The rank is only used to number
+ * rows on the next page; ordering comes from (total_ms, created_at), which the index serves.
+ */
+export function encodeCursor(row, rank) {
+  return `${row.total_ms}_${row.created_at}_${rank}`;
+}
+
+export function decodeCursor(raw) {
+  const m = /^(\d{1,12})_(\d{1,15})_(\d{1,9})$/.exec(String(raw ?? ''));
+  if (!m) return null;
+  const [totalMs, createdAt, rank] = m.slice(1).map(Number);
+  if (rank < 1) return null;
+  return { totalMs, createdAt, rank };
+}
