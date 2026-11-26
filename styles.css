@@ -366,3 +366,26 @@ select.is-mission { border-color: #1a9b4b !important; background: #effaf2; box-s
 .h-fill.h-human { background: var(--div-human); }
 .h-fill.h-supreme { background: var(--div-supreme); }
 .h-fill:empty { min-width: 0; }
+
+/* ===== 👑 全站最快: champion card ===== */
+.record-pin { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px;
+  margin: 0; padding: 14px 16px; border-radius: 16px; color: #3d2a00;
+  background: linear-gradient(135deg, #fff3c4 0%, #ffd95e 45%, #f4b400 100%);
+  border: 2px solid #e0a100; box-shadow: 0 6px 18px rgba(224, 161, 0, .35), inset 0 1px 0 rgba(255,255,255,.7);
+  position: relative; overflow: hidden; }
+.record-pin::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(115deg, transparent 30%, rgba(255,255,255,.55) 45%, transparent 60%);
+  transform: translateX(-100%); animation: rp-shine 3.5s ease-in-out 1s infinite; }
+@keyframes rp-shine { 0%, 60% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+@media (prefers-reduced-motion: reduce) { .record-pin::after { animation: none; display: none; } }
+.rp-crown { font-size: 40px; line-height: 1; filter: drop-shadow(0 2px 2px rgba(0,0,0,.2)); }
+.rp-body { display: grid; min-width: 0; }
+.rp-label { font-size: 12px; font-weight: 800; letter-spacing: .2em; color: #8a5a00; }
+.rp-name { font-size: 22px; font-weight: 900; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-time { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 26px; font-weight: 900;
+  font-variant-numeric: tabular-nums; color: #5a3b00; }
+@media (max-width: 400px) {
+  .record-pin { grid-template-columns: auto minmax(0, 1fr); row-gap: 2px; }
+  .rp-time { grid-column: 2; font-size: 24px; }
+  .rp-crown { grid-row: span 2; font-size: 36px; }
+}

@@ -688,7 +688,14 @@ function makePanel(root, { onPage = () => {} } = {}) {
     const rec = hist.record;
     const pin = $('[data-record]', root);
     pin.hidden = !rec;
-    if (rec) pin.textContent = `👑 全站最快：${rec.player}・${formatDuration(rec.timeMs + rec.penaltyMs)}`;
+    if (rec) {
+      pin.innerHTML = '<span class="rp-crown" aria-hidden="true">👑</span>'
+        + '<span class="rp-body"><span class="rp-label">全站最快</span><span class="rp-name"></span></span>'
+        + '<span class="rp-time"></span>';
+      $('.rp-name', pin).textContent = rec.player;
+      $('.rp-time', pin).textContent = formatDuration(rec.timeMs + rec.penaltyMs);
+      pin.setAttribute('aria-label', `全站最快：${rec.player}，${formatDuration(rec.timeMs + rec.penaltyMs)}`);
+    }
     histoEl.replaceChildren();
     for (const r of rows) {
       const isMine = mine != null && mine >= r.from && mine < r.to;
