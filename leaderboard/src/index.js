@@ -1,16 +1,25 @@
 // Cloudflare Worker: online leaderboard for 借用凱達格蘭大道大作戰.
 //
-//   POST /api/runs               → { runId }                 (player pressed 開始計時)
-//   POST /api/runs/:id/finish    → { record, rank, total, page }   (page = rows around the player)
+//   POST /api/runs                → { runId }   (player pressed 開始計時; runId is a signed token)
+//   POST /api/runs/:token/finish  → { record, rank, total, page }   (page = rows around the player)
 //   GET  /api/leaderboard        → page: first page, or ?after=<cursor> / ?before=<cursor> / ?around=<id> / ?last=1
 //
 // A page is { total, rows: [{ rank, ... }], prev, next } with keyset cursors, so every page
 // reads only `limit` rows from the index (no OFFSET, which D1 would bill row by row).
 //
 // The server measures the run time (finish − start), so a client can't just post a fake time.
+//
+// Cost notes (D1 bills rows read/written, indexes included):
+//  - Starting a run writes nothing: the start time travels in an HMAC-signed token, and
+//    scores.id = runId (PRIMARY KEY) makes each token finishable once. Rate limiting uses the
+//    Workers rate-limit binding instead of a table.
+//  - Rank uses 5 s + 100 ms bucket tables, so it reads a bounded number of rows.
+//  - Request bodies are text/plain, so browsers skip the CORS preflight request.
+// Legacy: runs created by the old start endpoint (bare UUIDs in the runs table) still finish.
 
 import {
-  validateFinish, corsOrigin, clampLimit, bucketOf, BUCKET_MS, STARTS_PER_MINUTE, encodeCursor, decodeCursor,
+  validateFinish, corsOrigin, clampLimit, bucketOf, coarseOf, BUCKET_MS, FINE_PER_COARSE,
+  encodeCursor, decodeCursor, signRunToken, verifyRunToken, parseBody, LEGACY_RUN_RE,
 } from './logic.js';
 
 const TOP_N = 10;
@@ -59,33 +68,39 @@ export default {
       }
 
       if (request.method === 'POST' && path === '/api/runs') {
-        const now = Date.now();
-        const ipHash = await hashIp(request.headers.get('CF-Connecting-IP') || 'unknown', env.IP_SALT || '');
-        const recent = await env.DB.prepare('SELECT COUNT(*) AS n FROM runs WHERE ip_hash = ? AND started_at > ?')
-          .bind(ipHash, now - 60_000).first('n');
-        if (recent >= STARTS_PER_MINUTE) return json({ error: 'rate_limited' }, 429);
-        if (Math.random() < 0.05) {
-          await env.DB.prepare('DELETE FROM runs WHERE started_at < ?').bind(now - 24 * 3600_000).run();
+        if (env.START_LIMITER) {
+          const ipHash = await hashIp(request.headers.get('CF-Connecting-IP') || 'unknown', env.IP_SALT || '');
+          const { success } = await env.START_LIMITER.limit({ key: ipHash });
+          if (!success) return json({ error: 'rate_limited' }, 429);
         }
-        const runId = crypto.randomUUID();
-        await env.DB.prepare('INSERT INTO runs (id, started_at, ip_hash) VALUES (?, ?, ?)').bind(runId, now, ipHash).run();
+        const runId = await signRunToken(env.RUN_SECRET, crypto.randomUUID(), Date.now());
         return json({ runId }, 201);
       }
 
-      const m = path.match(/^\/api\/runs\/([0-9a-f-]{36})\/finish$/);
+      const m = path.match(/^\/api\/runs\/([A-Za-z0-9._-]{36,120})\/finish$/);
       if (request.method === 'POST' && m) {
         const now = Date.now();
-        const runId = m[1];
-        let body;
-        try { body = await request.json(); } catch { return json({ error: 'bad_json' }, 400); }
+        const body = parseBody(await request.text());
+        if (!body) return json({ error: 'bad_json' }, 400);
 
-        // Claim the run atomically so it can only be finished once.
-        const claim = await env.DB.prepare('UPDATE runs SET finished = 1 WHERE id = ? AND finished = 0 RETURNING started_at')
-          .bind(runId).first();
-        if (!claim) return json({ error: 'unknown_or_finished_run' }, 404);
+        let runId;
+        let startedAt;
+        const token = await verifyRunToken(env.RUN_SECRET, m[1]);
+        if (token) {
+          ({ runId, startedAt } = token);
+        } else if (LEGACY_RUN_RE.test(m[1])) {
+          // Run opened before stateless tokens: claim it in the runs table, as before.
+          const claim = await env.DB.prepare('UPDATE runs SET finished = 1 WHERE id = ? AND finished = 0 RETURNING started_at')
+            .bind(m[1]).first();
+          if (!claim) return json({ error: 'unknown_or_finished_run' }, 404);
+          runId = m[1];
+          startedAt = claim.started_at;
+        } else {
+          return json({ error: 'unknown_or_finished_run' }, 404);
+        }
 
         const check = validateFinish({
-          elapsedMs: now - claim.started_at,
+          elapsedMs: now - startedAt,
           player: body.player,
           penaltyMs: body.penaltyMs,
           errors: body.errors,
@@ -93,20 +108,30 @@ export default {
         if (!check.ok) return json({ error: check.error }, 422);
         const r = check.value;
 
-        const bucket = bucketOf(r.totalMs);
-        await env.DB.batch([
-          env.DB.prepare(
-            'INSERT INTO scores (id, player, time_ms, penalty_ms, errors, total_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-          ).bind(runId, r.player, r.timeMs, r.penaltyMs, r.errors, r.totalMs, now),
-          env.DB.prepare("UPDATE stats SET value = value + 1 WHERE key = 'total'"),
-          env.DB.prepare('INSERT INTO score_buckets (bucket, n) VALUES (?, 1) ON CONFLICT(bucket) DO UPDATE SET n = n + 1')
-            .bind(bucket),
-        ]);
+        try {
+          await env.DB.batch([
+            env.DB.prepare(
+              'INSERT INTO scores (id, player, time_ms, penalty_ms, errors, total_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            ).bind(runId, r.player, r.timeMs, r.penaltyMs, r.errors, r.totalMs, now),
+            env.DB.prepare("UPDATE stats SET value = value + 1 WHERE key = 'total'"),
+            env.DB.prepare('INSERT INTO score_buckets (bucket, n) VALUES (?, 1) ON CONFLICT(bucket) DO UPDATE SET n = n + 1')
+              .bind(bucketOf(r.totalMs)),
+            env.DB.prepare('INSERT INTO score_buckets_coarse (bucket, n) VALUES (?, 1) ON CONFLICT(bucket) DO UPDATE SET n = n + 1')
+              .bind(coarseOf(r.totalMs)),
+          ]);
+        } catch (err) {
+          // scores.id is the PRIMARY KEY: a second finish with the same token is rejected (batch rolls back).
+          if (/UNIQUE|PRIMARY KEY|constraint/i.test(String(err?.message ?? err))) {
+            return json({ error: 'unknown_or_finished_run' }, 404);
+          }
+          throw err;
+        }
 
         boardCache = null;
         const rank = await rankOf(env, r.totalMs, now);
         const page = await pageAroundRow(env, { total_ms: r.totalMs, created_at: now }, rank, TOP_N);
-        return json({ record: { id: runId, ...r }, rank, total: page.total, page }, 201);
+        // `top` keeps pre-pagination clients (cached pages) rendering a board.
+        return json({ record: { id: runId, ...r }, rank, total: page.total, page, top: page.rows }, 201);
       }
 
       return json({ error: 'not_found' }, 404);
@@ -123,15 +148,21 @@ async function totalCount(env) {
   return (await env.DB.prepare("SELECT value FROM stats WHERE key = 'total'").first('value')) ?? 0;
 }
 
-/** Rank without scanning the table: faster 100 ms buckets + an index range inside our own bucket. */
+/**
+ * Rank without scanning the table: Σ 5 s buckets below ours + Σ 100 ms buckets below ours within
+ * our 5 s bucket + an index range inside our own 100 ms bucket. One round trip via batch.
+ */
 async function rankOf(env, totalMs, createdAt) {
-  const bucket = bucketOf(totalMs);
-  const faster = await env.DB.prepare('SELECT COALESCE(SUM(n), 0) AS s FROM score_buckets WHERE bucket < ?')
-    .bind(bucket).first('s');
-  const sameBucket = await env.DB.prepare(
-    'SELECT COUNT(*) AS c FROM scores WHERE total_ms >= ? AND (total_ms, created_at) < (?, ?)',
-  ).bind(bucket * BUCKET_MS, totalMs, createdAt).first('c');
-  return faster + sameBucket + 1;
+  const fine = bucketOf(totalMs);
+  const coarse = coarseOf(totalMs);
+  const [a, b, c] = await env.DB.batch([
+    env.DB.prepare('SELECT COALESCE(SUM(n), 0) AS s FROM score_buckets_coarse WHERE bucket < ?').bind(coarse),
+    env.DB.prepare('SELECT COALESCE(SUM(n), 0) AS s FROM score_buckets WHERE bucket >= ? AND bucket < ?')
+      .bind(coarse * FINE_PER_COARSE, fine),
+    env.DB.prepare('SELECT COUNT(*) AS s FROM scores WHERE total_ms >= ? AND (total_ms, created_at) < (?, ?)')
+      .bind(fine * BUCKET_MS, totalMs, createdAt),
+  ]);
+  return a.results[0].s + b.results[0].s + c.results[0].s + 1;
 }
 
 async function rowsAfter(env, key, limit, inclusive = false) {
@@ -171,7 +202,8 @@ function toPage(rows, firstRank, total) {
 async function firstPage(env, limit) {
   const { results } = await env.DB.prepare(`SELECT ${COLS} FROM scores ORDER BY total_ms, created_at LIMIT ?`)
     .bind(limit).all();
-  return toPage(results, 1, await totalCount(env));
+  const page = toPage(results, 1, await totalCount(env));
+  return { ...page, top: page.rows }; // `top`: alias for pre-pagination clients (cached pages)
 }
 
 /** Last aligned page: with 39 records and limit 10 → ranks 31–39. Reads only those rows. */

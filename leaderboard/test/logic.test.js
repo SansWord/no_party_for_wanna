@@ -55,3 +55,31 @@ test('cursor round-trips and rejects junk', () => {
   assert.deepEqual(decodeCursor(c), { totalMs: 65000, createdAt: 1795651200000, rank: 12 });
   for (const bad of ['', 'x', '1_2', '1_2_0', '1_2_3;DROP', null, undefined]) assert.equal(decodeCursor(bad), null);
 });
+
+import { signRunToken, verifyRunToken, coarseOf, parseBody, LEGACY_RUN_RE } from '../src/logic.js';
+
+test('run tokens verify, and tampering or a wrong secret fails', async () => {
+  const id = '0f8c2a6e-1b2c-4d3e-8f90-123456789abc';
+  const t = await signRunToken('s3cret', id, 1795700000000);
+  assert.deepEqual(await verifyRunToken('s3cret', t), { runId: id, startedAt: 1795700000000 });
+  assert.equal(await verifyRunToken('other', t), null);
+  const later = t.replace('.1795700000000.', '.1795700099999.'); // move the start time
+  assert.equal(await verifyRunToken('s3cret', later), null);
+  assert.equal(await verifyRunToken('s3cret', id), null);        // legacy UUID is not a token
+  assert.equal(await verifyRunToken('s3cret', 'x.y.z'), null);
+  assert.equal(await verifyRunToken('', t), null);
+  assert.ok(LEGACY_RUN_RE.test(id));
+});
+
+test('coarse buckets are 5 s', () => {
+  assert.equal(coarseOf(350), 0);
+  assert.equal(coarseOf(64_999), 12);
+  assert.equal(coarseOf(65_000), 13);
+});
+
+test('parseBody accepts JSON text and rejects junk', () => {
+  assert.deepEqual(parseBody('{"a":1}'), { a: 1 });
+  assert.deepEqual(parseBody(''), {});
+  assert.equal(parseBody('nope'), null);
+  assert.equal(parseBody('3'), null);
+});

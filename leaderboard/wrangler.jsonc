@@ -12,9 +12,14 @@
       "database_id": "9bcba9b8-a661-40f6-8169-6d5447161b1d"
     }
   ],
+  // Per-IP limit on starting runs (hashed IP as key). Replaces the old runs-table COUNT.
+  "ratelimits": [
+    { "name": "START_LIMITER", "namespace_id": "1001", "simple": { "limit": 20, "period": 60 } }
+  ],
   "vars": {
     // Comma-separated browser origins allowed to call the API.
     "ALLOWED_ORIGINS": "https://sansword.github.io,http://localhost:8080"
   }
-  // Secret (optional): `npx wrangler secret put IP_SALT` — salts the hashed IPs used for rate limiting.
+  // Secrets: `npx wrangler secret put RUN_SECRET` (required: signs run tokens) and
+  // `npx wrangler secret put IP_SALT` (salts the hashed IPs used as rate-limit keys).
 }

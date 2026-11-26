@@ -49,11 +49,11 @@ Cloudflare Worker + D1. The server measures each run (start request → finish r
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /api/runs` | Player pressed 開始計時 → `{ runId }` (rate-limited per hashed IP) |
-| `POST /api/runs/:id/finish` | `{ player, penaltyMs, errors }` → official record, rank, and the page around it. One finish per run; < 15 s or > 1 h is rejected; `Say Goodnight` is a reserved name. Rank comes from 100 ms `score_buckets` + an index range, and the total from `stats`, so no request scans the scores table (D1 bills per row scanned) |
+| `POST /api/runs` | Player pressed 開始計時 → `{ runId }`: an HMAC-signed token carrying the start time, so starting a run writes nothing to D1. Rate-limited per hashed IP with the Workers rate-limit binding |
+| `POST /api/runs/:id/finish` | `{ player, penaltyMs, errors }` → official record, rank, and the page around it. One finish per run (scores.id = run id is the PRIMARY KEY; legacy UUID runs in the `runs` table still finish); < 15 s or > 1 h is rejected; `Say Goodnight` is a reserved name. Rank comes from 5 s `score_buckets_coarse` + 100 ms `score_buckets` + an index range, and the total from `stats`, so no request scans the scores table (D1 bills per row scanned) |
 | `GET /api/leaderboard?limit=10[&after=<cursor>\|&before=<cursor>\|&around=<id>\|&last=1]` | One page, aligned to ranks 10n+1 (`around` → the page containing that record; `last` → final page) `{ total, rows[{rank,…}], prev, next }`. Keyset cursors (`total_ms_created_at_rank`), so each page reads only `limit` index rows — no OFFSET |
 
-The game falls back to localStorage (with a notice) when the API is unset, unreachable, or rejects a run.
+Bodies are sent as `text/plain` and GETs without a Content-Type, so browsers skip CORS preflights. The game falls back to localStorage (with a notice) when the API is unset, unreachable, or rejects a run.
 
 Local dev:
 
@@ -71,7 +71,8 @@ cd leaderboard
 npx wrangler login
 npx wrangler d1 create no-party-leaderboard      # paste database_id into wrangler.jsonc
 npm run db:init:remote
-npx wrangler secret put IP_SALT                  # any random string
+npx wrangler secret put RUN_SECRET               # random; signs run tokens
+npx wrangler secret put IP_SALT                  # random; salts rate-limit keys
 npm run deploy                                   # prints https://no-party-leaderboard.<account>.workers.dev
 ```
 

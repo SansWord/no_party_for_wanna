@@ -77,3 +77,68 @@ export function decodeCursor(raw) {
   if (rank < 1) return null;
   return { totalMs, createdAt, rank };
 }
+
+// ---------- Two-level rank buckets ----------
+// Rank = Σ coarse buckets (5 s) below yours + Σ fine buckets (100 ms) below yours inside your
+// coarse bucket + an index range inside your own fine bucket. Reads stay ~≤ 170 rows however
+// large the board gets (vs. one row per occupied 100 ms bucket before).
+export const COARSE_MS = 5000;
+export const FINE_PER_COARSE = COARSE_MS / BUCKET_MS;
+
+export function coarseOf(totalMs) {
+  return Math.floor(totalMs / COARSE_MS);
+}
+
+// ---------- Stateless run tokens ----------
+// Starting a run writes nothing: the Worker signs "<runId>.<startedAt>" with HMAC-SHA256 and the
+// client sends the token back on finish. Replays are stopped by scores.id = runId (PRIMARY KEY).
+
+const enc = new TextEncoder();
+
+function b64url(bytes) {
+  let s = '';
+  for (const b of new Uint8Array(bytes)) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function fromB64url(str) {
+  const s = str.replace(/-/g, '+').replace(/_/g, '/');
+  const bin = atob(s + '='.repeat((4 - (s.length % 4)) % 4));
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+}
+
+async function hmacKey(secret) {
+  return crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
+}
+
+export async function signRunToken(secret, runId, startedAt) {
+  if (!secret) throw new Error('RUN_SECRET missing');
+  const body = `${runId}.${startedAt}`;
+  const sig = await crypto.subtle.sign('HMAC', await hmacKey(secret), enc.encode(body));
+  return `${body}.${b64url(sig)}`;
+}
+
+const TOKEN_RE = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.(\d{13})\.([A-Za-z0-9_-]{43})$/;
+
+/** Returns { runId, startedAt } for a genuine token, else null. Constant-time via subtle.verify. */
+export async function verifyRunToken(secret, token) {
+  if (!secret) return null;
+  const m = TOKEN_RE.exec(String(token ?? ''));
+  if (!m) return null;
+  let sig;
+  try { sig = fromB64url(m[3]); } catch { return null; }
+  const ok = await crypto.subtle.verify('HMAC', await hmacKey(secret), sig, enc.encode(`${m[1]}.${m[2]}`));
+  return ok ? { runId: m[1], startedAt: Number(m[2]) } : null;
+}
+
+export const LEGACY_RUN_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** Request bodies arrive as text/plain (no CORS preflight); parse leniently. */
+export function parseBody(text) {
+  try {
+    const v = JSON.parse(text || '{}');
+    return v && typeof v === 'object' ? v : null;
+  } catch {
+    return null;
+  }
+}

@@ -1,7 +1,8 @@
 -- Leaderboard schema for 借用凱達格蘭大道大作戰.
 -- Apply: npx wrangler d1 execute no-party-leaderboard --file=schema.sql [--local|--remote]
 
--- A run is opened when the player presses 開始計時; the server's clock is the source of truth.
+-- Legacy: runs opened before stateless run tokens. New runs are not stored here; the table can be
+-- dropped once no pre-token runs remain unfinished (they expire after an hour).
 CREATE TABLE IF NOT EXISTS runs (
   id          TEXT PRIMARY KEY,
   started_at  INTEGER NOT NULL,          -- server epoch ms
@@ -35,6 +36,12 @@ CREATE TABLE IF NOT EXISTS score_buckets (
   n      INTEGER NOT NULL
 );
 
+-- Coarse 5 s buckets on top of the 100 ms ones: rank reads ≤ ~170 rows at any board size.
+CREATE TABLE IF NOT EXISTS score_buckets_coarse (
+  bucket INTEGER PRIMARY KEY,           -- floor(total_ms / 5000)
+  n      INTEGER NOT NULL
+);
+
 -- The record everyone competes against.
 INSERT OR IGNORE INTO scores (id, player, time_ms, penalty_ms, errors, total_ms, created_at, seed)
 VALUES ('seed-wanna-talk', 'Say Goodnight', 350, 0, 0, 350, 1795651200000, 1);
@@ -42,3 +49,4 @@ VALUES ('seed-wanna-talk', 'Say Goodnight', 350, 0, 0, 350, 1795651200000, 1);
 -- Initialise counters from existing rows (no-op when they already exist).
 INSERT OR IGNORE INTO stats (key, value) SELECT 'total', COUNT(*) FROM scores;
 INSERT OR IGNORE INTO score_buckets (bucket, n) SELECT total_ms / 100, COUNT(*) FROM scores GROUP BY total_ms / 100;
+INSERT OR IGNORE INTO score_buckets_coarse (bucket, n) SELECT total_ms / 5000, COUNT(*) FROM scores GROUP BY total_ms / 5000;

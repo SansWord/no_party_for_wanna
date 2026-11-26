@@ -46,10 +46,12 @@ export function isOnlineConfigured() {
   return !!apiBase();
 }
 
+// POST bodies go out as text/plain and GETs carry no Content-Type, so these are CORS "simple
+// requests": the browser skips the OPTIONS preflight (one fewer billed Worker request each).
 async function api(path, options = {}) {
   const res = await fetch(apiBase() + path, {
     ...options,
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    headers: options.body ? { 'Content-Type': 'text/plain;charset=UTF-8' } : {},
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(body.error || `HTTP ${res.status}`), { code: body.error });
