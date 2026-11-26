@@ -287,3 +287,11 @@ select.is-mission { border-color: #1a9b4b !important; background: #effaf2; box-s
   input, select, textarea { font-size: 16px !important; }
 }
 .hud, .toast-stack { transform-origin: 0 0; will-change: transform; }
+
+/* ===== Auto-typing progress hint ===== */
+.fake-progress { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 12px; font-weight: 600; color: #8a6414; }
+.fake-progress .bar { flex: 0 0 72px; height: 5px; background: #efe6cf; border-radius: 3px; overflow: hidden; }
+.fake-progress .bar i { display: block; height: 100%; width: 0; background: var(--gold); transition: width .12s; }
+.fake-progress.done { color: #1a7f45; }
+.fake-progress.done .bar i { background: #1a9b4b; }
+.field.fake-done input[data-fake] { border-color: #1a9b4b; background: #effaf2; }

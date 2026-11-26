@@ -267,6 +267,7 @@ $('#login-form').addEventListener('submit', (ev) => {
   const form = $('#app-form');
   form.idNumber.value = id.toUpperCase();
   form.phone.value = phone;
+  updateAllFakeProgress();
   showPortal('screen-type');
 });
 
@@ -459,6 +460,7 @@ function resetPortal() {
   $('#form-error').textContent = '';
   $('#approved-list').innerHTML = '<tr class="empty"><td colspan="3">查無資料</td></tr>';
   $$('.upload').forEach(resetUpload);
+  updateAllFakeProgress();
 }
 
 // ---------- Fake persona & fake typing ----------
@@ -491,6 +493,40 @@ function newPersona() {
 function reconcileFake(el) {
   const fake = state.persona[el.dataset.fake] || '';
   el.value = fake.slice(0, Math.min(el.value.length, fake.length));
+  updateFakeProgress(el.closest('.field'));
+}
+
+// Progress hint under each auto-typed field, so players know how many keys are left.
+// A field with several fake inputs (bank code + account) gets one combined hint.
+function fakeProgressEl(field) {
+  let el = field.querySelector(':scope > .fake-progress');
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'fake-progress';
+    el.setAttribute('aria-live', 'polite');
+    el.innerHTML = '<span class="bar"><i></i></span><span class="txt"></span>';
+    field.appendChild(el);
+  }
+  return el;
+}
+
+function updateFakeProgress(field) {
+  if (!field) return;
+  const inputs = $$('[data-fake]', field);
+  const total = inputs.reduce((n, el) => n + [...(state.persona[el.dataset.fake] || '')].length, 0);
+  const typed = inputs.reduce((n, el) => n + [...el.value].length, 0);
+  const done = total > 0 && typed >= total;
+  const el = fakeProgressEl(field);
+  el.classList.toggle('done', done);
+  field.classList.toggle('fake-done', done);
+  el.querySelector('i').style.width = `${total ? Math.round((typed / total) * 100) : 0}%`;
+  el.querySelector('.txt').textContent = done
+    ? '✓ 輸入完成'
+    : typed === 0 ? `⌨️ 按任意鍵輸入，共 ${total} 字` : `⌨️ 繼續打字…還差 ${total - typed} 字`;
+}
+
+function updateAllFakeProgress() {
+  new Set($$('[data-fake]').map((el) => el.closest('.field'))).forEach(updateFakeProgress);
 }
 
 for (const el of $$('[data-fake]')) {
@@ -675,6 +711,7 @@ function pinHudToVisualViewport() {
 }
 
 pinHudToVisualViewport();
+updateAllFakeProgress();
 fillTimeSelects();
 markMissionOption($('#app-form [name=district]'), mission.district);
 for (const el of $$('[data-mission]')) {
