@@ -22,8 +22,8 @@ test('validateFinish enforces server time window and sane penalties', () => {
   assert.deepEqual(validateFinish(base), {
     ok: true, value: { player: '玩家', timeMs: 60_000, penaltyMs: 5000, errors: 1, totalMs: 65_000 },
   });
-  assert.equal(validateFinish({ ...base, elapsedMs: 999 }).error, 'too_fast');
-  assert.equal(validateFinish({ ...base, elapsedMs: 1000, penaltyMs: 0, errors: 0 }).ok, true);
+  assert.equal(validateFinish({ ...base, elapsedMs: 359 }).error, 'too_fast');
+  assert.equal(validateFinish({ ...base, elapsedMs: 360, penaltyMs: 0, errors: 0 }).ok, true);
   assert.equal(validateFinish({ ...base, elapsedMs: 4_000_000 }).error, 'expired');
   assert.equal(validateFinish({ ...base, penaltyMs: 1500 }).error, 'bad_penalty');
   assert.equal(validateFinish({ ...base, penaltyMs: -1000 }).error, 'bad_penalty');
