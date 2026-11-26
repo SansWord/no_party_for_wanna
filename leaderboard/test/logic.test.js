@@ -141,3 +141,14 @@ test('tokens carry the start browser signal; old 3-part tokens still verify', as
   const t3 = await signRunToken('k', id, 1795700000000);
   assert.deepEqual(await verifyRunToken('k', t3), { runId: id, startedAt: 1795700000000, browser: null });
 });
+
+import { dayKey, dailyCap, DAILY_SCORE_CAP } from '../src/logic.js';
+
+test('daily cap counts by Taiwan date and reads the env override', () => {
+  assert.equal(dayKey(Date.parse('2026-11-26T15:59:59Z')), 'day:2026-11-26'); // 23:59:59 in Taipei
+  assert.equal(dayKey(Date.parse('2026-11-26T16:00:00Z')), 'day:2026-11-27'); // midnight in Taipei
+  assert.equal(DAILY_SCORE_CAP, 150_000);
+  assert.equal(dailyCap(undefined), 150_000);
+  assert.equal(dailyCap('5000'), 5000);
+  for (const bad of ['0', '-1', 'x', '1.5']) assert.equal(dailyCap(bad), 150_000);
+});

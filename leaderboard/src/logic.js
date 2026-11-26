@@ -7,6 +7,20 @@ export const MAX_PENALTY_MS = 600_000;
 export const MAX_ERRORS = 200;
 export const RESERVED_NAMES = ['say goodnight'];
 export const STARTS_PER_MINUTE = 20;
+// Spend guard: at most this many new scores per Taiwan calendar day (≈7 D1 row writes each,
+// so 150k ≈ 1M writes ≈ $1/day if all billed). Override with the DAILY_SCORE_CAP var.
+export const DAILY_SCORE_CAP = 150_000;
+
+/** stats key counting today's scores, by Taiwan date (UTC+8), e.g. "day:2026-11-27". */
+export function dayKey(nowMs) {
+  return `day:${new Date(nowMs + 8 * 3600_000).toISOString().slice(0, 10)}`;
+}
+
+/** The configured daily cap: a positive integer from the env var, else the default. */
+export function dailyCap(value) {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : DAILY_SCORE_CAP;
+}
 
 /** Normalize a nickname: strip control chars, collapse spaces, cap length (by code point). */
 export function sanitizePlayer(name) {

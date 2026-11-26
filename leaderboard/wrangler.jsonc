@@ -18,7 +18,9 @@
   ],
   "vars": {
     // Comma-separated browser origins allowed to call the API.
-    "ALLOWED_ORIGINS": "https://sansword.github.io,http://localhost:8080"
+    "ALLOWED_ORIGINS": "https://sansword.github.io,http://localhost:8080",
+    // Spend guard: new scores accepted per Taiwan day (≈7 D1 writes each → ≈$1/day at 150k).
+    "DAILY_SCORE_CAP": "150000"
   }
   // Secrets: `npx wrangler secret put RUN_SECRET` (required: signs run tokens) and
   // `npx wrangler secret put IP_SALT` (salts the hashed IPs used as rate-limit keys).

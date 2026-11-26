@@ -572,6 +572,7 @@ const ERROR_NOTES = {
   expired: '這局超過一小時，線上成績已失效，成績只存在本機。',
   rate_limited: '開局次數太頻繁，這局未登錄線上排行榜。',
   not_started: '開局時無法連上線上排行榜，成績只存在本機。',
+  daily_cap: '今天的線上排行榜登錄名額已滿，成績先存在本機，明天再來挑戰！',
 };
 
 function boardNote(res) {

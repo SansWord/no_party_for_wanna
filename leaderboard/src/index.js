@@ -25,12 +25,14 @@
 //  - Ranks use per-division 5 s + 100 ms bucket tables, so they read a bounded number of rows;
 //    division sizes live in stats rows div0/div1.
 //  - Request bodies are text/plain, so browsers skip the CORS preflight request.
+//  - Spend guard: a stats row per Taiwan day counts new scores; past DAILY_SCORE_CAP the finish
+//    is refused (503 daily_cap) and the game keeps the score on the device.
 // Legacy: runs created by the old start endpoint (bare UUIDs in the runs table) still finish.
 
 import {
   validateFinish, corsOrigin, clampLimit, bucketOf, coarseOf, BUCKET_MS, COARSE_MS, FINE_PER_COARSE,
   encodeCursor, decodeCursor, signRunToken, verifyRunToken, parseBody, LEGACY_RUN_RE, parseRange,
-  browserSignal, classifyRun, DIV_HUMAN, DIV_SUPREME, DIVISION_NAME, divisionIndex,
+  browserSignal, classifyRun, DIV_HUMAN, DIV_SUPREME, DIVISION_NAME, divisionIndex, dayKey, dailyCap,
 } from './logic.js';
 
 const TOP_N = 10;
@@ -42,6 +44,7 @@ const HISTOGRAM_CACHE_MS = 30_000;
 const SAMPLE_SIZE = 5;
 const boardCache = new Map(); // per-isolate cache of first pages: key `${division}:${limit}` → { at, body }
 let histogramCache = null;     // { at, body }
+let capReachedDay = null;      // dayKey once this isolate has seen the daily cap hit (skips D1)
 
 export default {
   async fetch(request, env) {
@@ -144,6 +147,17 @@ export default {
         });
         if (!check.ok) return json({ error: check.error }, 422);
         const r = check.value;
+
+        // Daily spend guard, checked before any score row is written.
+        const day = dayKey(now);
+        if (capReachedDay === day) return json({ error: 'daily_cap' }, 503);
+        const counted = await env.DB.prepare(
+          'INSERT INTO stats (key, value) VALUES (?, 1) ON CONFLICT(key) DO UPDATE SET value = value + 1 RETURNING value',
+        ).bind(day).first();
+        if (counted.value > dailyCap(env.DAILY_SCORE_CAP)) {
+          capReachedDay = day;
+          return json({ error: 'daily_cap' }, 503);
+        }
 
         const browser = browserSignal(request.headers, !!origin) && startBrowser !== false;
         const { flags, division } = classifyRun({ totalMs: r.totalMs, errors: r.errors, penaltyMs: r.penaltyMs, browser });
