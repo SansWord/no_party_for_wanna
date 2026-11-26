@@ -1,7 +1,7 @@
 // Pure validation helpers for the leaderboard Worker (unit-tested with node --test).
 
 export const MAX_NAME_LENGTH = 20;
-export const MIN_RUN_MS = 15_000;          // no human finishes the full form faster than this
+export const MIN_RUN_MS = 1_000;           // sanity floor; anything this fast is a script and lands in 至尊組 anyway
 export const MAX_RUN_MS = 60 * 60 * 1000;  // runs expire after an hour
 export const MAX_PENALTY_MS = 600_000;
 export const MAX_ERRORS = 200;
