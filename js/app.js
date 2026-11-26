@@ -4,7 +4,7 @@ import {
 } from './validators.js';
 import {
   beginRun, submitResult, getLeaderboardPage, getHistogram, sampleNames, isReservedName, isOnlineConfigured,
-  divisionOf, DIVISIONS, SUPREME_MS,
+  DIVISIONS, SUPREME_MS, flagReasons,
 } from './scores.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -180,9 +180,11 @@ async function finish(caseNo) {
     ${res.online ? `<dt>本機計時</dt><dd>${formatDuration(total)}</dd>` : ''}
     <dt>模擬案件編號</dt><dd>${caseNo}</dd>`;
   const scope = res.online ? '線上' : '本機';
-  const division = res.division || divisionOf(official);
+  const division = res.division;
   $('#result-rank').textContent = `${scope}${DIVISIONS[division]}：第 ${res.rank} 名（共 ${res.total} 筆）`;
-  resultPanel.showResult(res, official, boardNote(res));
+  const why = res.division === 'supreme' ? flagReasons(res.flags || 0) : [];
+  const note = [why.length ? `這次歸入至尊組：${why.join('、')}。` : '', boardNote(res)].filter(Boolean).join(' ');
+  resultPanel.showResult(res, official, note);
   renderBoard();
 }
 
@@ -582,7 +584,7 @@ function boardNote(res) {
 
 /** Display ranges for the histogram; edges are multiples of the server's 5 s bins. */
 const HISTO_RANGES = [
-  { from: 0, to: SUPREME_MS, label: '20 秒內', division: 'supreme' },
+  { from: 0, to: SUPREME_MS, label: '20 秒內' },
   { from: 20_000, to: 30_000, label: '20–30 秒' },
   { from: 30_000, to: 40_000, label: '30–40 秒' },
   { from: 40_000, to: 50_000, label: '40–50 秒' },
@@ -593,13 +595,16 @@ const HISTO_RANGES = [
   { from: 120_000, to: 180_000, label: '2–3 分' },
   { from: 180_000, to: 300_000, label: '3–5 分' },
   { from: 300_000, to: 24 * 3600_000, label: '5 分以上' },
-].map((r) => ({ division: 'human', ...r }));
+];
 
 function histogramRows(hist) {
-  const rows = HISTO_RANGES.map((r) => ({ ...r, n: 0 }));
+  const rows = HISTO_RANGES.map((r) => ({ ...r, n: 0, human: 0, supreme: 0 }));
   for (const b of hist.bins) {
     const row = rows.find((r) => b.fromMs >= r.from && b.fromMs < r.to);
-    if (row) row.n += b.n;
+    if (!row) continue;
+    row.n += b.n;
+    row.human += b.human ?? 0;
+    row.supreme += b.supreme ?? 0;
   }
   return rows;
 }
@@ -621,6 +626,7 @@ function makePanel(root, { onPage = () => {} } = {}) {
   let highlight = null;
   let hist = null;
   let mine = null; // official total ms of the player's own run (result screen)
+  let myDivision = null;
   let openRow = null;
 
   function setTab(div) {
@@ -688,12 +694,16 @@ function makePanel(root, { onPage = () => {} } = {}) {
       const isMine = mine != null && mine >= r.from && mine < r.to;
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = `histo-row div-${r.division}${isMine ? ' me' : ''}`;
+      btn.className = `histo-row${isMine ? ' me' : ''}`;
       btn.setAttribute('aria-expanded', 'false');
-      btn.setAttribute('aria-label', `${r.label}，${r.n} 筆${r.division === 'supreme' ? '，至尊組' : ''}${isMine ? '，你在這裡' : ''}。點一下看暱稱`);
-      btn.innerHTML = `<span class="h-label"></span><span class="h-track"><span class="h-fill"></span></span><span class="h-n"></span>`;
+      btn.setAttribute('aria-label', `${r.label}，${r.n} 筆（人類組 ${r.human}、至尊組 ${r.supreme}）${isMine ? '，你在這裡' : ''}。點一下看暱稱`);
+      btn.innerHTML = `<span class="h-label"></span><span class="h-track"><span class="h-fill h-human"></span><span class="h-fill h-supreme"></span></span><span class="h-n"></span>`;
       $('.h-label', btn).textContent = r.label;
-      $('.h-fill', btn).style.width = r.n ? `max(4px, ${(r.n / max) * 100}%)` : '0';
+      // Stacked: 人類組 then 至尊組, each segment at least 3px when non-zero so small counts stay visible.
+      const seg = (n) => (n ? `max(3px, ${(n / max) * 100}%)` : '0');
+      $('.h-human', btn).style.width = seg(r.human);
+      $('.h-supreme', btn).style.width = seg(r.supreme);
+      $('.h-track', btn).classList.toggle('both', r.human > 0 && r.supreme > 0);
       $('.h-n', btn).textContent = `${r.n}${isMine ? ' ◀ 你' : ''}`;
       const detail = document.createElement('div');
       detail.className = 'histo-detail';
@@ -719,7 +729,7 @@ function makePanel(root, { onPage = () => {} } = {}) {
     }
     const pct = hist.total ? ((r.n / hist.total) * 100).toFixed(1) : '0';
     detail.innerHTML = `<p class="d-head"></p><p class="d-names">抽樣中…</p><button type="button" class="d-more">🔀 換一批</button>`;
-    $('.d-head', detail).textContent = `${r.label}・${r.n} 筆（${pct}%）${r.division === 'supreme' ? '・至尊組' : ''}`;
+    $('.d-head', detail).textContent = `${r.label}・${r.n} 筆（${pct}%）・人類組 ${r.human}／至尊組 ${r.supreme}`;
     const load = async () => {
       const names = $('.d-names', detail);
       names.textContent = '抽樣中…';
@@ -744,7 +754,7 @@ function makePanel(root, { onPage = () => {} } = {}) {
     t.addEventListener('click', () => {
       if (t.dataset.div === division) return;
       setTab(t.dataset.div);
-      go(highlight && divisionOf(mine ?? 0) === division ? { around: highlight } : {});
+      go(highlight && myDivision === division ? { around: highlight } : {});
     });
   }
   prevBtn.addEventListener('click', () => current?.prev && go({ before: current.prev }));
@@ -756,14 +766,16 @@ function makePanel(root, { onPage = () => {} } = {}) {
     /** Lobby: histogram + first page of the selected division. */
     load() {
       mine = null;
+      myDivision = null;
       highlight = null;
       return Promise.all([loadHistogram(), go({})]);
     },
     /** Result screen: open the player's division on their page, mark them in the histogram. */
     showResult(res, officialMs, note) {
       mine = officialMs;
+      myDivision = res.division;
       highlight = res.record.id;
-      setTab(res.division || divisionOf(officialMs));
+      setTab(res.division);
       $('[data-note]', root).textContent = note;
       renderBoard(res.page);
       loadHistogram();
@@ -782,7 +794,7 @@ function makePanel(root, { onPage = () => {} } = {}) {
 const lobbyPanel = makePanel($('[data-panel=lobby]'), {
   onPage: (page) => {
     $('[data-panel=lobby] [data-note]').textContent = page.online
-      ? '伺服器計時。20 秒內完成的歸入至尊組。'
+      ? '伺服器計時。20 秒內完成、或不是從遊戲網頁送出的成績，歸入至尊組。'
       : isOnlineConfigured() ? '線上排行榜暫時無法連線，顯示本機紀錄。' : '成績只存在你的瀏覽器。';
   },
 });

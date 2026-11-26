@@ -111,24 +111,28 @@ async function hmacKey(secret) {
   return crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
 }
 
-export async function signRunToken(secret, runId, startedAt) {
+export async function signRunToken(secret, runId, startedAt, browser = null) {
   if (!secret) throw new Error('RUN_SECRET missing');
-  const body = `${runId}.${startedAt}`;
+  const body = browser == null ? `${runId}.${startedAt}` : `${runId}.${startedAt}.${browser ? 1 : 0}`;
   const sig = await crypto.subtle.sign('HMAC', await hmacKey(secret), enc.encode(body));
   return `${body}.${b64url(sig)}`;
 }
 
-const TOKEN_RE = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.(\d{13})\.([A-Za-z0-9_-]{43})$/;
+const TOKEN_RE = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.(\d{13})(?:\.([01]))?\.([A-Za-z0-9_-]{43})$/;
 
-/** Returns { runId, startedAt } for a genuine token, else null. Constant-time via subtle.verify. */
+/**
+ * Returns { runId, startedAt, browser } for a genuine token, else null (constant-time verify).
+ * `browser` is the start request's browser signal, or null for tokens issued before it existed.
+ */
 export async function verifyRunToken(secret, token) {
   if (!secret) return null;
   const m = TOKEN_RE.exec(String(token ?? ''));
   if (!m) return null;
   let sig;
-  try { sig = fromB64url(m[3]); } catch { return null; }
-  const ok = await crypto.subtle.verify('HMAC', await hmacKey(secret), sig, enc.encode(`${m[1]}.${m[2]}`));
-  return ok ? { runId: m[1], startedAt: Number(m[2]) } : null;
+  try { sig = fromB64url(m[4]); } catch { return null; }
+  const body = m[3] == null ? `${m[1]}.${m[2]}` : `${m[1]}.${m[2]}.${m[3]}`;
+  const ok = await crypto.subtle.verify('HMAC', await hmacKey(secret), sig, enc.encode(body));
+  return ok ? { runId: m[1], startedAt: Number(m[2]), browser: m[3] == null ? null : m[3] === '1' } : null;
 }
 
 export const LEGACY_RUN_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -163,4 +167,47 @@ export function parseRange(fromRaw, toRaw) {
   const to = Number.parseInt(toRaw, 10);
   if (!Number.isFinite(from) || !Number.isFinite(to) || from < 0 || to <= from || to - from > 24 * 3600_000) return null;
   return { from, to };
+}
+
+// ---------- Human vs script classification ----------
+// A run is 人類組 only if nothing flags it; any flag puts it in 至尊組.
+export const DIV_HUMAN = 0;
+export const DIV_SUPREME = 1;
+export const FLAG_FAST = 1;     // total under SUPREME_MS
+export const FLAG_PAYLOAD = 2;  // errors / penalty combination the game can't produce
+export const FLAG_CLIENT = 4;   // start or finish request didn't come from a browser page
+
+/**
+ * The game adds 2–10 s of penalty per mistake (and never a penalty without a mistake), so
+ * errors and penalty must agree. Hand-written requests often get this wrong.
+ */
+export function isConsistentPayload(errors, penaltyMs) {
+  if (errors === 0) return penaltyMs === 0;
+  return penaltyMs >= errors * 2000 && penaltyMs <= errors * 10000;
+}
+
+/**
+ * Browser signal for a request whose Origin already passed the allow-list: a browser page's
+ * fetch always carries Origin and a User-Agent, and Sec-Fetch-Mode (when sent) is "cors".
+ * Plain HTTP clients usually send none of these. (A determined script can fake them.)
+ */
+export function browserSignal(headers, originAllowed) {
+  if (!originAllowed) return false;
+  const ua = (headers.get('User-Agent') || '').trim();
+  const mode = headers.get('Sec-Fetch-Mode');
+  return ua.length > 0 && (mode == null || mode === 'cors');
+}
+
+/** `browser`: true / false / null (unknown, e.g. records from before the signal existed). */
+export function classifyRun({ totalMs, errors, penaltyMs, browser }) {
+  let flags = 0;
+  if (totalMs < SUPREME_MS) flags |= FLAG_FAST;
+  if (!isConsistentPayload(errors, penaltyMs)) flags |= FLAG_PAYLOAD;
+  if (browser === false) flags |= FLAG_CLIENT;
+  return { flags, division: flags ? DIV_SUPREME : DIV_HUMAN };
+}
+
+export const DIVISION_NAME = ['human', 'supreme'];
+export function divisionIndex(name) {
+  return name === 'human' ? DIV_HUMAN : name === 'supreme' ? DIV_SUPREME : null;
 }

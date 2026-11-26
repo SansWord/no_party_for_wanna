@@ -59,12 +59,39 @@ async function api(path, options = {}) {
 }
 
 // ---------- Divisions ----------
-/** 至尊組: total < 20 s. 人類組: total ≥ 20 s. (Matches SUPREME_MS in the Worker.) */
+// 人類組 only when nothing flags the run; otherwise 至尊組. Mirrors classifyRun in the Worker
+// (the server also checks that start/finish came from a browser page; offline runs always do).
 export const SUPREME_MS = 20_000;
 export const DIVISIONS = { human: '人類組', supreme: '至尊組' };
+export const FLAG_FAST = 1;
+export const FLAG_PAYLOAD = 2;
+export const FLAG_CLIENT = 4;
 const total = (r) => r.timeMs + r.penaltyMs;
-export function divisionOf(totalMs) {
-  return totalMs < SUPREME_MS ? 'supreme' : 'human';
+
+export function isConsistentPayload(errors, penaltyMs) {
+  if (errors === 0) return penaltyMs === 0;
+  return penaltyMs >= errors * 2000 && penaltyMs <= errors * 10000;
+}
+
+export function classify(r) {
+  let flags = 0;
+  if (total(r) < SUPREME_MS) flags |= FLAG_FAST;
+  if (!isConsistentPayload(r.errors, r.penaltyMs)) flags |= FLAG_PAYLOAD;
+  return { flags, division: flags ? 'supreme' : 'human' };
+}
+
+/** Why a run is in 至尊組, for the result screen. */
+export function flagReasons(flags) {
+  const out = [];
+  if (flags & FLAG_FAST) out.push('完成時間少於 20 秒');
+  if (flags & FLAG_PAYLOAD) out.push('錯誤次數和罰秒對不上');
+  if (flags & FLAG_CLIENT) out.push('請求不是從遊戲網頁送出');
+  return out;
+}
+
+/** Division of a record; the seed (Say Goodnight) belongs to both. */
+function inDivision(r, division) {
+  return !division || r.seed || classify(r).division === division;
 }
 
 // ---------- Local fallback ----------
@@ -79,7 +106,7 @@ function readAll() {
 function localRanked(division = null) {
   return [...SEED_RECORDS, ...readAll()]
     .filter((r) => r.success !== false)
-    .filter((r) => !division || divisionOf(total(r)) === division)
+    .filter((r) => inDivision(r, division))
     .sort((a, b) => total(a) - total(b));
 }
 
@@ -110,10 +137,10 @@ function localSubmit(record) {
   const all = readAll();
   all.push(record);
   localStorage.setItem(KEY, JSON.stringify(all.slice(-200)));
-  const division = divisionOf(total(record));
+  const { division, flags } = classify(record);
   const ranked = localRanked(division);
   const page = localPageAround(record.id, division);
-  return { online: false, record, division, rank: ranked.findIndex((r) => r.id === record.id) + 1, total: ranked.length, page };
+  return { online: false, record, division, flags, rank: ranked.findIndex((r) => r.id === record.id) + 1, total: ranked.length, page };
 }
 
 function localHistogram() {
@@ -121,15 +148,17 @@ function localHistogram() {
   const bins = new Map();
   for (const r of ranked) {
     const b = Math.floor(total(r) / 5000);
-    bins.set(b, (bins.get(b) || 0) + 1);
+    const e = bins.get(b) || { fromMs: b * 5000, toMs: (b + 1) * 5000, n: 0, human: 0, supreme: 0 };
+    e[r.seed ? 'supreme' : classify(r).division] += 1;
+    e.n += 1;
+    bins.set(b, e);
   }
   const best = ranked[0];
   return {
     online: false,
     total: ranked.length,
-    supremeMs: SUPREME_MS,
     binMs: 5000,
-    bins: [...bins].sort((a, b) => a[0] - b[0]).map(([b, n]) => ({ fromMs: b * 5000, toMs: (b + 1) * 5000, n })),
+    bins: [...bins.values()].sort((a, b) => a.fromMs - b.fromMs),
     record: best ? { player: best.player, timeMs: best.timeMs, penaltyMs: best.penaltyMs, errors: best.errors } : null,
   };
 }
@@ -169,11 +198,12 @@ export async function submitResult(record, run) {
         method: 'POST',
         body: JSON.stringify({ player: record.player, penaltyMs: record.penaltyMs, errors: record.errors }),
       });
-      const division = res.division || divisionOf(res.record.totalMs);
+      const division = res.division || classify({ ...record, timeMs: res.record.timeMs }).division;
       return {
         online: true,
         record: { ...res.record, caseNo: record.caseNo },
         division,
+        flags: res.flags ?? 0,
         rank: res.rank,
         total: res.total,
         page: { online: true, division, ...res.page },

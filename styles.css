@@ -322,10 +322,7 @@ select.is-mission { border-color: #1a9b4b !important; background: #effaf2; box-s
 .h-label { white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
 .h-track { height: 14px; display: flex; align-items: center; }
 .h-fill { display: block; height: 14px; border-radius: 0 4px 4px 0; transition: width .25s ease-out; }
-.div-human .h-fill { background: var(--div-human); }
-.div-supreme .h-fill { background: var(--div-supreme); }
 .h-n { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 3ch; text-align: right; white-space: nowrap; }
-.div-supreme .h-label { color: #5b3fd6; font-weight: 700; }
 .histo-row.me { box-shadow: inset 0 0 0 2px var(--brand); }
 .histo-row.me .h-n { color: var(--brand-dark); }
 
@@ -362,3 +359,10 @@ select.is-mission { border-color: #1a9b4b !important; background: #effaf2; box-s
   .board li b { grid-area: time; }
   .pager-group button { min-height: 40px; }
 }
+
+/* ===== Stacked histogram bars (人類組 + 至尊組 per time range) ===== */
+.h-track { gap: 0; }
+.h-track.both .h-human { border-radius: 0; margin-right: 2px; }   /* 2px surface gap between segments */
+.h-fill.h-human { background: var(--div-human); }
+.h-fill.h-supreme { background: var(--div-supreme); }
+.h-fill:empty { min-width: 0; }

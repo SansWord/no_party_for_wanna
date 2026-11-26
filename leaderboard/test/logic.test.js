@@ -61,7 +61,7 @@ import { signRunToken, verifyRunToken, coarseOf, parseBody, LEGACY_RUN_RE } from
 test('run tokens verify, and tampering or a wrong secret fails', async () => {
   const id = '0f8c2a6e-1b2c-4d3e-8f90-123456789abc';
   const t = await signRunToken('s3cret', id, 1795700000000);
-  assert.deepEqual(await verifyRunToken('s3cret', t), { runId: id, startedAt: 1795700000000 });
+  assert.deepEqual(await verifyRunToken('s3cret', t), { runId: id, startedAt: 1795700000000, browser: null });
   assert.equal(await verifyRunToken('other', t), null);
   const later = t.replace('.1795700000000.', '.1795700099999.'); // move the start time
   assert.equal(await verifyRunToken('s3cret', later), null);
@@ -97,4 +97,46 @@ test('divisions split at 20 s on a coarse-bucket boundary', () => {
   assert.deepEqual(parseRange('15000', '20000'), { from: 15000, to: 20000 });
   assert.equal(parseRange('20000', '15000'), null);
   assert.equal(parseRange('a', '1'), null);
+});
+
+import {
+  isConsistentPayload, browserSignal, classifyRun, FLAG_FAST, FLAG_PAYLOAD, FLAG_CLIENT, DIV_HUMAN, DIV_SUPREME,
+} from '../src/logic.js';
+
+test('payload consistency mirrors how the game adds penalties', () => {
+  assert.ok(isConsistentPayload(0, 0));
+  assert.ok(!isConsistentPayload(0, 5000));       // penalty without a mistake
+  assert.ok(!isConsistentPayload(87, 0));         // mistakes without penalty (seen in the wild)
+  assert.ok(isConsistentPayload(2, 15000));       // 5 s + 10 s
+  assert.ok(!isConsistentPayload(1, 30000));      // more than 10 s for one mistake
+});
+
+test('browser signal needs allowed Origin + User-Agent, and cors mode when sent', () => {
+  const h = (o) => new Headers(o);
+  const ua = 'Mozilla/5.0 (iPhone) AppleWebKit Safari';
+  assert.ok(browserSignal(h({ 'User-Agent': ua, 'Sec-Fetch-Mode': 'cors' }), true));
+  assert.ok(browserSignal(h({ 'User-Agent': ua }), true));                 // older WebKit: no Sec-Fetch
+  assert.ok(!browserSignal(h({ 'User-Agent': ua }), false));               // no/unknown Origin
+  assert.ok(!browserSignal(h({}), true));                                  // no User-Agent
+  assert.ok(!browserSignal(h({ 'User-Agent': ua, 'Sec-Fetch-Mode': 'navigate' }), true));
+});
+
+test('classification: any flag → 至尊組', () => {
+  const ok = { totalMs: 45_000, errors: 1, penaltyMs: 5000, browser: true };
+  assert.deepEqual(classifyRun(ok), { flags: 0, division: DIV_HUMAN });
+  assert.deepEqual(classifyRun({ ...ok, browser: null }), { flags: 0, division: DIV_HUMAN }); // legacy: unknown
+  assert.equal(classifyRun({ ...ok, totalMs: 15_000 }).flags, FLAG_FAST);
+  assert.equal(classifyRun({ ...ok, penaltyMs: 0 }).flags, FLAG_PAYLOAD);
+  assert.equal(classifyRun({ ...ok, browser: false }).flags, FLAG_CLIENT);
+  assert.equal(classifyRun({ ...ok, browser: false }).division, DIV_SUPREME);
+});
+
+test('tokens carry the start browser signal; old 3-part tokens still verify', async () => {
+  const id = '0f8c2a6e-1b2c-4d3e-8f90-123456789abc';
+  const t4 = await signRunToken('k', id, 1795700000000, false);
+  assert.deepEqual(await verifyRunToken('k', t4), { runId: id, startedAt: 1795700000000, browser: false });
+  const forged = t4.replace('.0.', '.1.');                       // flip the flag
+  assert.equal(await verifyRunToken('k', forged), null);
+  const t3 = await signRunToken('k', id, 1795700000000);
+  assert.deepEqual(await verifyRunToken('k', t3), { runId: id, startedAt: 1795700000000, browser: null });
 });

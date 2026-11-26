@@ -1,37 +1,42 @@
 // Cloudflare Worker: online leaderboard for 借用凱達格蘭大道大作戰.
 //
 //   POST /api/runs                → { runId }   (player pressed 開始計時; runId is a signed token)
-//   POST /api/runs/:token/finish  → { record, rank, globalRank, division, total, page }
+//   POST /api/runs/:token/finish  → { record, rank, division, flags, total, page }
 //   GET  /api/leaderboard         → page: first page, or ?after=<cursor> / ?before=<cursor> /
 //                                   ?around=<id> / ?last=1; optional &division=human|supreme
-//   GET  /api/histogram           → { bins: [{ fromMs, toMs, n }], total, supremeMs, record }
+//   GET  /api/histogram           → { bins: [{ fromMs, toMs, n, human, supreme }], total, record }
 //   GET  /api/histogram/sample    → ?from=<ms>&to=<ms> → { names } (≈5 random nicknames)
 //
-// Divisions: 至尊組 (supreme) = total < 20 s, 人類組 (human) = total ≥ 20 s. Without `division`
-// the leaderboard is global (what cached older clients expect).
+// Divisions are labels stored on each score (scores.division): a run is 人類組 (0) only if no
+// flag applies, otherwise 至尊組 (1). Flags: under 20 s, an errors/penalty combination the game
+// can't produce, or a start/finish request that didn't come from a browser page (see
+// classifyRun in logic.js). Without `division` the leaderboard is global (cached old clients).
 //
 // A page is { total, rows: [{ rank, ... }], prev, next } with keyset cursors, so every page
-// reads only `limit` rows from the index (no OFFSET, which D1 would bill row by row). Ranks in
-// a division page are ranks within that division.
+// reads only `limit` rows from an index (no OFFSET, which D1 would bill row by row). Ranks in a
+// division page are ranks within that division.
 //
 // The server measures the run time (finish − start), so a client can't just post a fake time.
 //
 // Cost notes (D1 bills rows read/written, indexes included):
-//  - Starting a run writes nothing: the start time travels in an HMAC-signed token, and
-//    scores.id = runId (PRIMARY KEY) makes each token finishable once. Rate limiting uses the
-//    Workers rate-limit binding instead of a table.
-//  - Rank uses 5 s + 100 ms bucket tables, so it reads a bounded number of rows. Division sizes
-//    and the histogram come from the 5 s table too.
+//  - Starting a run writes nothing: the start time (and the start request's browser signal)
+//    travel in an HMAC-signed token; scores.id = runId (PRIMARY KEY) makes it finishable once.
+//    Rate limiting uses the Workers rate-limit binding.
+//  - Ranks use per-division 5 s + 100 ms bucket tables, so they read a bounded number of rows;
+//    division sizes live in stats rows div0/div1.
 //  - Request bodies are text/plain, so browsers skip the CORS preflight request.
 // Legacy: runs created by the old start endpoint (bare UUIDs in the runs table) still finish.
 
 import {
   validateFinish, corsOrigin, clampLimit, bucketOf, coarseOf, BUCKET_MS, COARSE_MS, FINE_PER_COARSE,
-  encodeCursor, decodeCursor, signRunToken, verifyRunToken, parseBody, LEGACY_RUN_RE,
-  SUPREME_MS, SUPREME_COARSE, parseDivision, divisionOf, parseRange,
+  encodeCursor, decodeCursor, signRunToken, verifyRunToken, parseBody, LEGACY_RUN_RE, parseRange,
+  browserSignal, classifyRun, DIV_HUMAN, DIV_SUPREME, DIVISION_NAME, divisionIndex,
 } from './logic.js';
 
 const TOP_N = 10;
+// Say Goodnight is seeded twice (one row per division) so it leads both boards. Views spanning
+// both divisions (histogram, the global board for cached old clients) skip the 人類組 copy.
+const SEED_HUMAN_ID = 'seed-wanna-talk-human';
 const BOARD_CACHE_MS = 10_000;
 const HISTOGRAM_CACHE_MS = 30_000;
 const SAMPLE_SIZE = 5;
@@ -56,7 +61,7 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
 
     // Browsers from other sites are refused; non-browser clients have no Origin and are allowed
-    // (the server-side clock still applies to them).
+    // (the server-side clock still applies to them, and they land in 至尊組).
     if (request.headers.get('Origin') && !origin) return json({ error: 'origin_not_allowed' }, 403);
 
     const url = new URL(request.url);
@@ -66,7 +71,7 @@ export default {
     try {
       if (request.method === 'GET' && path === '/api/leaderboard') {
         const limit = clampLimit(q.get('limit'), TOP_N);
-        const division = parseDivision(q.get('division'));
+        const division = divisionIndex(q.get('division'));
         if (q.has('after') || q.has('before')) {
           const cursor = decodeCursor(q.get('after') ?? q.get('before'));
           if (!cursor) return json({ error: 'bad_cursor' }, 400);
@@ -102,11 +107,12 @@ export default {
           const { success } = await env.START_LIMITER.limit({ key: ipHash });
           if (!success) return json({ error: 'rate_limited' }, 429);
         }
-        const runId = await signRunToken(env.RUN_SECRET, crypto.randomUUID(), Date.now());
+        const browser = browserSignal(request.headers, !!origin);
+        const runId = await signRunToken(env.RUN_SECRET, crypto.randomUUID(), Date.now(), browser);
         return json({ runId }, 201);
       }
 
-      const m = path.match(/^\/api\/runs\/([A-Za-z0-9._-]{36,120})\/finish$/);
+      const m = path.match(/^\/api\/runs\/([A-Za-z0-9._-]{36,130})\/finish$/);
       if (request.method === 'POST' && m) {
         const now = Date.now();
         const body = parseBody(await request.text());
@@ -114,9 +120,11 @@ export default {
 
         let runId;
         let startedAt;
+        let startBrowser = null; // unknown for tokens issued before the signal and for legacy runs
         const token = await verifyRunToken(env.RUN_SECRET, m[1]);
         if (token) {
           ({ runId, startedAt } = token);
+          startBrowser = token.browser;
         } else if (LEGACY_RUN_RE.test(m[1])) {
           // Run opened before stateless tokens: claim it in the runs table, as before.
           const claim = await env.DB.prepare('UPDATE runs SET finished = 1 WHERE id = ? AND finished = 0 RETURNING started_at')
@@ -137,16 +145,19 @@ export default {
         if (!check.ok) return json({ error: check.error }, 422);
         const r = check.value;
 
+        const browser = browserSignal(request.headers, !!origin) && startBrowser !== false;
+        const { flags, division } = classifyRun({ totalMs: r.totalMs, errors: r.errors, penaltyMs: r.penaltyMs, browser });
+
         try {
           await env.DB.batch([
             env.DB.prepare(
-              'INSERT INTO scores (id, player, time_ms, penalty_ms, errors, total_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            ).bind(runId, r.player, r.timeMs, r.penaltyMs, r.errors, r.totalMs, now),
-            env.DB.prepare("UPDATE stats SET value = value + 1 WHERE key = 'total'"),
-            env.DB.prepare('INSERT INTO score_buckets (bucket, n) VALUES (?, 1) ON CONFLICT(bucket) DO UPDATE SET n = n + 1')
-              .bind(bucketOf(r.totalMs)),
-            env.DB.prepare('INSERT INTO score_buckets_coarse (bucket, n) VALUES (?, 1) ON CONFLICT(bucket) DO UPDATE SET n = n + 1')
-              .bind(coarseOf(r.totalMs)),
+              'INSERT INTO scores (id, player, time_ms, penalty_ms, errors, total_ms, created_at, division, flags, client) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            ).bind(runId, r.player, r.timeMs, r.penaltyMs, r.errors, r.totalMs, now, division, flags, browser ? 1 : 0),
+            env.DB.prepare('UPDATE stats SET value = value + 1 WHERE key = ?').bind(`div${division}`),
+            env.DB.prepare('INSERT INTO score_buckets_div (division, bucket, n) VALUES (?, ?, 1) ON CONFLICT(division, bucket) DO UPDATE SET n = n + 1')
+              .bind(division, bucketOf(r.totalMs)),
+            env.DB.prepare('INSERT INTO score_buckets_coarse_div (division, bucket, n) VALUES (?, ?, 1) ON CONFLICT(division, bucket) DO UPDATE SET n = n + 1')
+              .bind(division, coarseOf(r.totalMs)),
           ]);
         } catch (err) {
           // scores.id is the PRIMARY KEY: a second finish with the same token is rejected (batch rolls back).
@@ -157,15 +168,14 @@ export default {
         }
 
         boardCache.clear();
-        const division = divisionOf(r.totalMs);
         const div = await divisionInfo(env, division);
-        const globalRank = await rankOf(env, r.totalMs, now);
-        const page = await pageAroundRow(env, { total_ms: r.totalMs, created_at: now }, globalRank, TOP_N, div);
+        const rank = (await countFaster(env, division, r.totalMs, now)) + 1;
+        const page = await pageAroundRow(env, { total_ms: r.totalMs, created_at: now }, rank, TOP_N, div);
         return json({
           record: { id: runId, ...r },
-          rank: globalRank - div.before,
-          globalRank,
-          division,
+          rank,
+          division: DIVISION_NAME[division],
+          flags,
           total: div.total,
           page,
           top: page.rows, // keeps pre-pagination clients (cached pages) rendering a board
@@ -180,60 +190,57 @@ export default {
   },
 };
 
-const COLS = 'id, player, time_ms, penalty_ms, errors, total_ms, created_at, seed';
+const COLS = 'id, player, time_ms, penalty_ms, errors, total_ms, created_at, seed, division';
 
-async function totalCount(env) {
-  return (await env.DB.prepare("SELECT value FROM stats WHERE key = 'total'").first('value')) ?? 0;
-}
-
-async function supremeCount(env) {
-  return env.DB.prepare('SELECT COALESCE(SUM(n), 0) AS s FROM score_buckets_coarse WHERE bucket < ?')
-    .bind(SUPREME_COARSE).first('s');
+async function divisionTotals(env) {
+  const { results } = await env.DB.prepare("SELECT key, value FROM stats WHERE key IN ('div0', 'div1')").all();
+  const t = [0, 0];
+  for (const row of results) t[row.key === 'div1' ? 1 : 0] = row.value;
+  return t;
 }
 
 /**
- * Where a division sits in the global order: SQL bound, how many rows rank before it, and its size.
- * null division = the whole board.
+ * How to query a division: SQL filter + binds, and its size. null = the whole board, ordered by
+ * the global (total_ms, created_at) index for cached clients that don't send a division.
  */
 async function divisionInfo(env, division) {
-  const total = await totalCount(env);
-  if (!division) return { where: '1 = 1', before: 0, total };
-  const supreme = await supremeCount(env);
-  return division === 'supreme'
-    ? { where: `total_ms < ${SUPREME_MS}`, before: 0, total: supreme }
-    : { where: `total_ms >= ${SUPREME_MS}`, before: supreme, total: total - supreme };
+  const [d0, d1] = await divisionTotals(env);
+  if (division == null) return { where: 'id <> ?', binds: [SEED_HUMAN_ID], division: null, total: d0 + d1 - 1 };
+  return { where: 'division = ?', binds: [division], division, total: division === DIV_HUMAN ? d0 : d1 };
 }
 
 /**
- * Global rank without scanning the table: Σ 5 s buckets below ours + Σ 100 ms buckets below ours
- * within our 5 s bucket + an index range inside our own 100 ms bucket. One round trip via batch.
+ * Rows in `division` that rank ahead of (totalMs, createdAt), without scanning the table:
+ * Σ 5 s buckets below + Σ 100 ms buckets below within our 5 s bucket + an index range inside our
+ * own 100 ms bucket. One round trip via batch.
  */
-async function rankOf(env, totalMs, createdAt) {
+async function countFaster(env, division, totalMs, createdAt) {
   const fine = bucketOf(totalMs);
   const coarse = coarseOf(totalMs);
   const [a, b, c] = await env.DB.batch([
-    env.DB.prepare('SELECT COALESCE(SUM(n), 0) AS s FROM score_buckets_coarse WHERE bucket < ?').bind(coarse),
-    env.DB.prepare('SELECT COALESCE(SUM(n), 0) AS s FROM score_buckets WHERE bucket >= ? AND bucket < ?')
-      .bind(coarse * FINE_PER_COARSE, fine),
-    env.DB.prepare('SELECT COUNT(*) AS s FROM scores WHERE total_ms >= ? AND (total_ms, created_at) < (?, ?)')
-      .bind(fine * BUCKET_MS, totalMs, createdAt),
+    env.DB.prepare('SELECT COALESCE(SUM(n), 0) AS s FROM score_buckets_coarse_div WHERE division = ? AND bucket < ?')
+      .bind(division, coarse),
+    env.DB.prepare('SELECT COALESCE(SUM(n), 0) AS s FROM score_buckets_div WHERE division = ? AND bucket >= ? AND bucket < ?')
+      .bind(division, coarse * FINE_PER_COARSE, fine),
+    env.DB.prepare('SELECT COUNT(*) AS s FROM scores WHERE division = ? AND total_ms >= ? AND (total_ms, created_at) < (?, ?)')
+      .bind(division, fine * BUCKET_MS, totalMs, createdAt),
   ]);
-  return a.results[0].s + b.results[0].s + c.results[0].s + 1;
+  return a.results[0].s + b.results[0].s + c.results[0].s;
 }
 
-async function rowsAfter(env, key, limit, where, inclusive = false) {
+async function rowsAfter(env, key, limit, div, inclusive = false) {
   const op = inclusive ? '>=' : '>';
   const { results } = await env.DB.prepare(
-    `SELECT ${COLS} FROM scores WHERE ${where} AND (total_ms, created_at) ${op} (?, ?) ORDER BY total_ms, created_at LIMIT ?`,
-  ).bind(key.total_ms, key.created_at, limit).all();
+    `SELECT ${COLS} FROM scores WHERE ${div.where} AND (total_ms, created_at) ${op} (?, ?) ORDER BY total_ms, created_at LIMIT ?`,
+  ).bind(...div.binds, key.total_ms, key.created_at, limit).all();
   return results;
 }
 
-async function rowsBefore(env, key, limit, where) {
+async function rowsBefore(env, key, limit, div) {
   if (limit <= 0) return [];
   const { results } = await env.DB.prepare(
-    `SELECT ${COLS} FROM scores WHERE ${where} AND (total_ms, created_at) < (?, ?) ORDER BY total_ms DESC, created_at DESC LIMIT ?`,
-  ).bind(key.total_ms, key.created_at, limit).all();
+    `SELECT ${COLS} FROM scores WHERE ${div.where} AND (total_ms, created_at) < (?, ?) ORDER BY total_ms DESC, created_at DESC LIMIT ?`,
+  ).bind(...div.binds, key.total_ms, key.created_at, limit).all();
   return results.reverse();
 }
 
@@ -246,6 +253,7 @@ function toPage(rows, firstRank, total) {
     penaltyMs: row.penalty_ms,
     errors: row.errors,
     seed: !!row.seed,
+    division: DIVISION_NAME[row.division ?? DIV_HUMAN],
   }));
   const last = out.at(-1);
   return {
@@ -259,7 +267,7 @@ function toPage(rows, firstRank, total) {
 async function firstPage(env, limit, div) {
   const { results } = await env.DB.prepare(
     `SELECT ${COLS} FROM scores WHERE ${div.where} ORDER BY total_ms, created_at LIMIT ?`,
-  ).bind(limit).all();
+  ).bind(...div.binds, limit).all();
   const page = toPage(results, 1, div.total);
   return { ...page, top: page.rows }; // `top`: alias for pre-pagination clients (cached pages)
 }
@@ -270,46 +278,65 @@ async function lastPage(env, limit, div) {
   const count = ((div.total - 1) % limit) + 1;
   const { results } = await env.DB.prepare(
     `SELECT ${COLS} FROM scores WHERE ${div.where} ORDER BY total_ms DESC, created_at DESC LIMIT ?`,
-  ).bind(count).all();
+  ).bind(...div.binds, count).all();
   return toPage(results.reverse(), div.total - results.length + 1, div.total);
 }
 
 async function pageFrom(env, cursor, dir, limit, div) {
   const key = { total_ms: cursor.totalMs, created_at: cursor.createdAt };
-  if (dir === 'after') return toPage(await rowsAfter(env, key, limit, div.where), cursor.rank + 1, div.total);
-  const rows = await rowsBefore(env, key, Math.min(limit, cursor.rank - 1), div.where);
+  if (dir === 'after') return toPage(await rowsAfter(env, key, limit, div), cursor.rank + 1, div.total);
+  const rows = await rowsBefore(env, key, Math.min(limit, cursor.rank - 1), div);
   return toPage(rows, cursor.rank - rows.length, div.total);
 }
 
 /** Page containing a row, aligned to fixed pages: rank 33 with limit 10 → ranks 31–40. */
-async function pageAroundRow(env, key, globalRank, limit, div) {
-  const rank = globalRank - div.before;
-  const before = await rowsBefore(env, key, (rank - 1) % limit, div.where);
-  const from = await rowsAfter(env, key, limit - before.length, div.where, true);
+async function pageAroundRow(env, key, rank, limit, div) {
+  const before = await rowsBefore(env, key, (rank - 1) % limit, div);
+  const from = await rowsAfter(env, key, limit - before.length, div, true);
   return toPage([...before, ...from], rank - before.length, div.total);
 }
 
 async function pageAround(env, id, limit, division) {
-  const row = await env.DB.prepare('SELECT total_ms, created_at FROM scores WHERE id = ?').bind(String(id)).first();
+  const row = await env.DB.prepare('SELECT total_ms, created_at, division FROM scores WHERE id = ?').bind(String(id)).first();
   if (!row) return firstPage(env, limit, await divisionInfo(env, division));
-  // A division-scoped request always shows the row's own division (that's where its rank lives).
-  const div = await divisionInfo(env, division ? divisionOf(row.total_ms) : null);
-  return pageAroundRow(env, row, await rankOf(env, row.total_ms, row.created_at), limit, div);
+  if (division == null) {
+    // Global board (cached old clients): rank across both divisions.
+    // Both per-division counts include a Say Goodnight row ahead of everyone: count it once.
+    const faster = (await countFaster(env, DIV_HUMAN, row.total_ms, row.created_at))
+      + (await countFaster(env, DIV_SUPREME, row.total_ms, row.created_at));
+    const rank = faster - (faster > 0 && row.total_ms > 350 ? 1 : 0) + 1;
+    return pageAroundRow(env, row, rank, limit, await divisionInfo(env, null));
+  }
+  // A division-scoped request shows the row's own division (that's where its rank lives).
+  const rank = (await countFaster(env, row.division, row.total_ms, row.created_at)) + 1;
+  return pageAroundRow(env, row, rank, limit, await divisionInfo(env, row.division));
 }
 
-/** Counts per 5 s bucket (from the coarse table) + the #1 record for the pinned header. */
+/** Counts per 5 s bin split by division (from the coarse table) + the #1 record. */
 async function histogram(env) {
-  const [bins, total, top] = await env.DB.batch([
-    env.DB.prepare('SELECT bucket, n FROM score_buckets_coarse WHERE n > 0 ORDER BY bucket'),
-    env.DB.prepare("SELECT value FROM stats WHERE key = 'total'"),
+  const [bins, totals, top] = await env.DB.batch([
+    env.DB.prepare('SELECT division, bucket, n FROM score_buckets_coarse_div WHERE n > 0 ORDER BY bucket'),
+    env.DB.prepare("SELECT key, value FROM stats WHERE key IN ('div0', 'div1')"),
     env.DB.prepare(`SELECT ${COLS} FROM scores ORDER BY total_ms, created_at LIMIT 1`),
   ]);
+  const byBucket = new Map();
+  for (const b of bins.results) {
+    const e = byBucket.get(b.bucket) || { fromMs: b.bucket * COARSE_MS, toMs: (b.bucket + 1) * COARSE_MS, n: 0, human: 0, supreme: 0 };
+    e[DIVISION_NAME[b.division]] += b.n;
+    e.n += b.n;
+    byBucket.set(b.bucket, e);
+  }
+  const t = { human: 0, supreme: 0 };
+  for (const row of totals.results) t[row.key === 'div1' ? 'supreme' : 'human'] = row.value;
+  // Don't count the 人類組 copy of the seed twice in the distribution.
+  const dup = byBucket.get(0);
+  if (dup && dup.human > 0) { dup.human -= 1; dup.n -= 1; t.human -= 1; }
   const best = top.results[0];
   return {
-    total: total.results[0]?.value ?? 0,
-    supremeMs: SUPREME_MS,
+    total: t.human + t.supreme,
+    totals: t,
     binMs: COARSE_MS,
-    bins: bins.results.map((b) => ({ fromMs: b.bucket * COARSE_MS, toMs: (b.bucket + 1) * COARSE_MS, n: b.n })),
+    bins: [...byBucket.values()],
     record: best ? { player: best.player, timeMs: best.time_ms, penaltyMs: best.penalty_ms, errors: best.errors } : null,
   };
 }

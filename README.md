@@ -35,6 +35,18 @@ ES modules need an HTTP server; opening `index.html` via `file://` won't work.
 - `js/scores.js` — online leaderboard client with localStorage fallback; `js/config.js` — API URL (written at deploy)
 - `tests/validators.test.js`
 
+## 人類組 / 至尊組
+
+Each score is labelled when it's saved (`scores.division`, `scores.flags`). A run is **人類組** only if no flag applies; any flag puts it in **至尊組** (scripts welcome there):
+
+| Flag | Rule | Applies to |
+|---|---|---|
+| 1 | total under 20 s | all records |
+| 2 | errors/penalty combination the game can't produce (each mistake adds 2–10 s; no penalty without a mistake) | all records |
+| 4 | start **or** finish request didn't come from a browser page (allowed `Origin` + `User-Agent`, `Sec-Fetch-Mode: cors` when sent). The start's signal is signed into the run token | runs after 2026-11-26 (`client` column; older rows are `NULL` = unknown) |
+
+Say Goodnight is seeded in both divisions (`seed-wanna-talk` 至尊組, `seed-wanna-talk-human` 人類組); the histogram and the division-less board count it once. Ranks use per-division counters (`score_buckets_div`, `score_buckets_coarse_div`, `stats.div0/div1`). Migration for an existing DB: `migrations/0002_divisions.sql`, deploy, then `migrations/0002b_resync.sql`.
+
 ## Seed record
 
 `SEED_RECORDS` in `js/scores.js` puts **Say Goodnight — 00:00.35** at the top of every board; players compete against it. `leaderboard/schema.sql` seeds the online database with the same row.

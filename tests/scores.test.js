@@ -8,7 +8,7 @@ globalThis.localStorage = {
   removeItem: (k) => store.delete(k),
 };
 const {
-  submitResult, getLeaderboardPage, getHistogram, sampleNames, beginRun, isReservedName, divisionOf,
+  submitResult, getLeaderboardPage, getHistogram, sampleNames, beginRun, isReservedName, classify, flagReasons,
 } = await import('../js/scores.js');
 
 beforeEach(() => store.clear());
@@ -17,19 +17,22 @@ beforeEach(() => store.clear());
 const rec = (i, ms) => ({ id: `p${i}`, player: `P${i}`, timeMs: ms, penaltyMs: 0, errors: 0 });
 const span = (p) => [p.rows[0].rank, p.rows.at(-1).rank];
 
-test('divisions split at 20 s', () => {
-  assert.equal(divisionOf(350), 'supreme');
-  assert.equal(divisionOf(19_999), 'supreme');
-  assert.equal(divisionOf(20_000), 'human');
+test('classification: under 20 s or inconsistent payload → 至尊組', () => {
+  assert.deepEqual(classify({ timeMs: 19_999, penaltyMs: 0, errors: 0 }), { flags: 1, division: 'supreme' });
+  assert.deepEqual(classify({ timeMs: 20_000, penaltyMs: 0, errors: 0 }), { flags: 0, division: 'human' });
+  assert.deepEqual(classify({ timeMs: 40_000, penaltyMs: 0, errors: 87 }), { flags: 2, division: 'supreme' });
+  assert.deepEqual(classify({ timeMs: 40_000, penaltyMs: 5000, errors: 0 }), { flags: 2, division: 'supreme' });
+  assert.deepEqual(classify({ timeMs: 40_000, penaltyMs: 15000, errors: 2 }), { flags: 0, division: 'human' });
+  assert.deepEqual(flagReasons(1 | 4), ['完成時間少於 20 秒', '請求不是從遊戲網頁送出']);
 });
 
-test('offline: Say Goodnight (0.35s) leads 至尊組; 人類組 starts empty', async () => {
-  const sup = await getLeaderboardPage({ division: 'supreme' });
-  assert.equal(sup.online, false);
-  assert.deepEqual(sup.rows.map((r) => [r.rank, r.player]), [[1, 'Say Goodnight']]);
-  assert.equal(sup.rows[0].timeMs + sup.rows[0].penaltyMs, 350);
-  const hum = await getLeaderboardPage({ division: 'human' });
-  assert.equal(hum.total, 0);
+test('offline: Say Goodnight (0.35s) leads both 至尊組 and 人類組', async () => {
+  for (const division of ['supreme', 'human']) {
+    const p = await getLeaderboardPage({ division });
+    assert.equal(p.online, false);
+    assert.deepEqual(p.rows.map((r) => [r.rank, r.player]), [[1, 'Say Goodnight']]);
+    assert.equal(p.rows[0].timeMs + p.rows[0].penaltyMs, 350);
+  }
 });
 
 test('offline: a finish is ranked inside its own division', async () => {
@@ -40,12 +43,14 @@ test('offline: a finish is ranked inside its own division', async () => {
   assert.equal(fast.rank, 2); // behind Say Goodnight
   const human = await submitResult({ id: 'c', player: 'C', timeMs: 30_000, penaltyMs: 0, errors: 0 }, null);
   assert.equal(human.division, 'human');
-  assert.equal(human.rank, 1); // ahead of A (65 s); B and the seed are in 至尊組
-  assert.deepEqual(human.page.rows.map((r) => r.player), ['C', 'A']);
+  assert.equal(human.rank, 2); // behind Say Goodnight, ahead of A (65 s); B is in 至尊組
+  assert.deepEqual(human.page.rows.map((r) => r.player), ['Say Goodnight', 'C', 'A']);
+  const forged = await submitResult({ id: 'd', player: 'D', timeMs: 40_000, penaltyMs: 0, errors: 87 }, null);
+  assert.deepEqual([forged.division, forged.flags], ['supreme', 2]);
 });
 
 test('offline: paging walks a division 10 at a time, both directions', async () => {
-  for (let i = 0; i < 25; i++) await submitResult(rec(i, 20_000 + i * 1000), null);
+  for (let i = 0; i < 24; i++) await submitResult(rec(i, 20_000 + i * 1000), null); // + seed = 25
   const p1 = await getLeaderboardPage({ division: 'human' });
   assert.deepEqual([...span(p1), p1.total], [1, 10, 25]);
   const p2 = await getLeaderboardPage({ division: 'human', after: p1.next });
@@ -61,8 +66,8 @@ test('offline: paging walks a division 10 at a time, both directions', async () 
 
 test('offline: result page is the aligned page containing the record (rank 33 → 31–40)', async () => {
   for (let i = 0; i < 40; i++) await submitResult(rec(i, 20_000 + i * 1000), null);
-  const page = await getLeaderboardPage({ division: 'human', around: 'p32' }); // rank 33
-  assert.ok(page.rows.some((r) => r.id === 'p32' && r.rank === 33));
+  const page = await getLeaderboardPage({ division: 'human', around: 'p31' }); // rank 33 (seed is #1)
+  assert.ok(page.rows.some((r) => r.id === 'p31' && r.rank === 33));
   assert.deepEqual(span(page), [31, 40]);
 });
 
@@ -72,7 +77,7 @@ test('offline: histogram bins by 5 s and samples names from a range', async () =
   await submitResult(rec(3, 42_000), null);
   const h = await getHistogram();
   assert.equal(h.total, 4);
-  assert.deepEqual(h.bins.map((b) => [b.fromMs, b.n]), [[0, 1], [15_000, 2], [40_000, 1]]);
+  assert.deepEqual(h.bins.map((b) => [b.fromMs, b.n, b.human, b.supreme]), [[0, 1, 0, 1], [15_000, 2, 0, 2], [40_000, 1, 1, 0]]);
   assert.equal(h.record.player, 'Say Goodnight');
   const s = await sampleNames(15_000, 20_000);
   assert.deepEqual(s.names.sort(), ['P1', 'P2']);
