@@ -389,3 +389,17 @@ select.is-mission { border-color: #1a9b4b !important; background: #effaf2; box-s
   .rp-time { grid-column: 2; font-size: 24px; }
   .rp-crown { grid-row: span 2; font-size: 36px; }
 }
+
+/* Champion name: never truncate — wrap if it must, scale gently with the screen. */
+.rp-name { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere;
+  font-size: clamp(18px, 5.6vw, 22px); }
+@media (max-width: 400px) {
+  .record-pin { padding: 12px 14px; gap: 10px; }
+  .rp-crown { font-size: 32px; }
+}
+/* Phones up to large models (430px+): stack the time under the name so the name gets the full width. */
+@media (max-width: 520px) {
+  .record-pin { grid-template-columns: auto minmax(0, 1fr); row-gap: 2px; }
+  .rp-time { grid-column: 2; font-size: 24px; }
+  .rp-crown { grid-row: span 2; }
+}
