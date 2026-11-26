@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8" />
+<!-- Source for og.png (1200x630). Re-render: see README "Social preview image". -->
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1200px; height: 630px; }
+  body {
+    font-family: "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+    background:
+      radial-gradient(circle at 85% 15%, rgba(110, 240, 166, .18), transparent 45%),
+      radial-gradient(circle at 10% 100%, rgba(124, 92, 255, .25), transparent 50%),
+      linear-gradient(135deg, #0d1413 0%, #111716 55%, #0d3b36 100%);
+    color: #e9f1ef;
+    position: relative;
+    overflow: hidden;
+  }
+  .road {
+    position: absolute; left: -100px; right: -100px; bottom: 70px; height: 120px;
+    background: #1b2423; transform: rotate(-4deg);
+    border-top: 4px solid #2f3b39; border-bottom: 4px solid #2f3b39;
+  }
+  .road::after {
+    content: ""; position: absolute; left: 0; right: 0; top: 56px; height: 8px;
+    background: repeating-linear-gradient(90deg, #f3c65f 0 70px, transparent 70px 120px);
+    opacity: .8;
+  }
+  .wrap { position: relative; z-index: 1; padding: 54px 64px; height: 100%; display: flex; flex-direction: column; }
+  .tag {
+    align-self: flex-start; display: flex; gap: 10px; align-items: center;
+    background: #2a2140; color: #e6dcff; border-radius: 999px; padding: 8px 18px; font-size: 22px;
+  }
+  .tag b { background: #7c5cff; color: #fff; border-radius: 999px; padding: 2px 12px; font-size: 18px; }
+  h1 { font-size: 76px; font-weight: 900; letter-spacing: .02em; margin-top: 26px; line-height: 1.1; }
+  .cta { font-size: 46px; font-weight: 800; color: #6ef0a6; margin-top: 18px; }
+  .record {
+    position: absolute; right: 64px; bottom: 150px; width: 440px;
+    background: rgba(255, 255, 255, .96); color: #1d2a2a; border-radius: 22px; padding: 22px 28px;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, .45); transform: rotate(-2deg);
+  }
+  .record .label { font-size: 20px; color: #146c64; font-weight: 700; letter-spacing: .08em; }
+  .record .row { display: flex; align-items: baseline; justify-content: space-between; margin-top: 8px; }
+  .record .who { font-size: 34px; font-weight: 800; }
+  .record .rank { color: #b8892c; font-size: 30px; font-weight: 900; margin-right: 10px; }
+  .record .time {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 64px; font-weight: 800; color: #146c64;
+    letter-spacing: .01em; margin-top: 4px;
+  }
+  .record .note { font-size: 20px; color: #5d6b6a; }
+  .foot { margin-top: 14px; font-size: 22px; color: #93a3a0; }
+</style>
+</head>
+<body>
+  <div class="road"></div>
+  <div class="wrap">
+    <div class="tag">🎮 計時挑戰 <b>模擬遊戲・非官方</b></div>
+    <h1>借用凱達格蘭大道<br />大作戰</h1>
+    <p class="cta">你能借到凱達格蘭大道嗎？</p>
+    <p class="foot">填完路權申請要多久？挑戰排行榜，打敗目前紀錄保持人。</p>
+  </div>
+  <div class="record">
+    <div class="label">🏆 目前紀錄</div>
+    <div class="row">
+      <div class="who"><span class="rank">#1</span>Wanna Talk</div>
+      <div class="note">零失誤</div>
+    </div>
+    <div class="time">00:00.33</div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>借用凱達格蘭大道大作戰｜凱道路權申請計時模擬遊戲</title>
+  <meta name="description" content="借用凱達格蘭大道大作戰 — 非官方模擬遊戲：計時挑戰你能多快完成凱達格蘭大道使用道路集會申請。" />
+  <meta property="og:locale" content="zh_TW" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="借用凱達格蘭大道大作戰｜你能借到凱達格蘭大道嗎？" />
+  <meta property="og:description" content="非官方計時模擬遊戲：填完凱道路權申請要多久？目前紀錄 Wanna Talk 00:00.33，來挑戰！" />
+  <!-- TODO at deploy: make og:image/og:url absolute (e.g. https://<user>.github.io/no_party_for_wanna/og.png); crawlers ignore relative URLs. -->
+  <meta property="og:image" content="og.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="借用凱達格蘭大道大作戰：目前紀錄 Wanna Talk 00:00.33，你能借到凱達格蘭大道嗎？" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- ===== Game HUD (outside the simulated site) ===== -->
+  <header id="hud" class="hud">
+    <div class="hud-brand" title="這是遊戲模擬器，不是政府網站">🎮 <b>借用凱達格蘭大道大作戰</b><span>模擬遊戲</span></div>
+    <div class="hud-timer" aria-live="off">
+      <span class="hud-label" id="hud-state">準備</span>
+      <span id="hud-time">00:00.00</span>
+    </div>
+    <div class="hud-mission">
+      <span class="hud-label">任務</span>
+      <span id="hud-mission-text"></span>
+    </div>
+    <div class="hud-stats">
+      <span>錯誤 <b id="hud-errors">0</b></span>
+      <span>罰秒 <b id="hud-penalty">+0s</b></span>
+    </div>
+    <button type="button" id="hud-quit" class="hud-quit">放棄</button>
+  </header>
+
+  <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
+
+  <!-- ===== Lobby ===== -->
+  <main id="screen-lobby" class="screen lobby">
+    <div class="lobby-card">
+      <p class="lobby-kicker">非官方・計時模擬遊戲</p>
+      <h1 class="game-title">借用凱達格蘭大道大作戰</h1>
+      <p class="lobby-sub">計時挑戰：你能多快完成凱達格蘭大道使用道路集會申請？</p>
+
+      <section class="lobby-mission">
+        <h2>本次任務</h2>
+        <dl>
+          <dt>行政區</dt><dd id="lobby-district"></dd>
+          <dt>路段</dt><dd id="lobby-location"></dd>
+          <dt>期間</dt><dd id="lobby-period"></dd>
+        </dl>
+      </section>
+
+      <section class="persona-card" aria-labelledby="persona-title">
+        <h2 id="persona-title">本局假身分資料卡</h2>
+        <p class="persona-note">每局隨機產生。申請時請使用這份資料，個資欄位按任意鍵也會自動打出它。</p>
+        <dl class="persona-list" data-persona-list></dl>
+      </section>
+
+      <form id="lobby-form" class="lobby-form">
+        <label>玩家暱稱
+          <input id="player-name" name="player" maxlength="20" required autocomplete="nickname" placeholder="例：凱道快手" />
+        </label>
+        <div class="privacy-warning" role="note">
+          <strong>⚠️ 請勿輸入任何真實個人資料</strong>
+          <p>本遊戲的個資欄位（姓名、身分證字號、電話、地址、信箱、銀行帳號）不會記錄你按下的字：<b>按任意鍵，就會自動打出一份假身分</b>。附件只要按「上傳」按鈕即可，不需要真的檔案。</p>
+          <label class="check"><input type="checkbox" name="ack" required /> 我了解，這是模擬遊戲，我不會輸入真實資料。</label>
+        </div>
+        <button type="submit" class="btn-start">開始計時</button>
+      </form>
+
+      <details class="lobby-rules">
+        <summary>遊戲規則</summary>
+        <ul>
+          <li>按下「開始計時」後，計時器立即啟動，送出申請即停止。</li>
+          <li>點錯選項、驗證碼輸入錯誤、表單送出被退回，都會加罰秒數。</li>
+          <li>成績＝實際操作時間＋罰秒，越快排名越前面。</li>
+          <li>個資欄位按任意鍵就會自動打出假資料，每局隨機產生一份假身分。</li>
+          <li>附件按「上傳」即可，模擬上傳需要一點時間。</li>
+          <li>成績只存在你的瀏覽器。</li>
+        </ul>
+      </details>
+
+      <section class="lobby-board">
+        <h2>本機排行榜</h2>
+        <ol id="local-board" class="board"></ol>
+        <p class="board-note">全球排行榜即將推出。</p>
+      </section>
+    </div>
+    <p class="disclaimer">本網站為模擬遊戲，與臺北市政府無關，不會送出任何真實申請。實際申請請洽官方平台。</p>
+  </main>
+
+  <!-- ===== Simulated portal ===== -->
+  <div id="portal" class="portal" hidden>
+    <div class="sim-ribbon">模擬畫面</div>
+    <details class="persona-float" open>
+      <summary>假身分資料卡</summary>
+      <dl class="persona-list" data-persona-list></dl>
+    </details>
+    <div class="portal-banner">
+      <div class="portal-seal" aria-hidden="true">北</div>
+      <div>
+        <div class="portal-title">使用道路集會申請平台<span class="sim-tag">遊戲模擬</span></div>
+        <div class="portal-subtitle">借用凱達格蘭大道大作戰 模擬畫面 — 非官方網站</div>
+      </div>
+    </div>
+    <div class="sim-strip" role="note">🎮 你正在玩 <b>借用凱達格蘭大道大作戰</b> 計時模擬遊戲：這不是政府網站，所有資料皆為假資料，不會送出任何真實申請。</div>
+
+    <!-- Home -->
+    <section id="screen-home" class="screen portal-body">
+      <div class="grid-2">
+        <div class="panel">
+          <h3 class="panel-title">公告事項</h3>
+          <table class="tbl">
+            <thead><tr><th>主　旨</th><th>內　容</th></tr></thead>
+            <tbody>
+              <tr><td>本局任務</td><td>申請 2026-11-25 08:00 至 2026-11-27 22:00 凱達格蘭大道全段。</td></tr>
+              <tr><td>補件通知</td><td>如需補件，請於通知後 4 小時內完成。</td></tr>
+              <tr><td>系統維護</td><td>本平台不定期維護，造成不便敬請見諒。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="panel panel-login">
+          <h3 class="panel-title">申請登入</h3>
+          <div class="login-icon" aria-hidden="true">🔑</div>
+          <p>首次使用請先閱讀隱私權政策及申請規定。</p>
+          <button type="button" class="btn-primary" id="btn-home-next">下一步</button>
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="panel">
+          <h3 class="panel-title">已核准申請</h3>
+          <table class="tbl">
+            <thead><tr><th>申請類型</th><th>地點</th><th>日期</th></tr></thead>
+            <tbody id="approved-list"><tr class="empty"><td colspan="3">查無資料</td></tr></tbody>
+          </table>
+        </div>
+        <div class="panel">
+          <h3 class="panel-title">即將釋放路段公告</h3>
+          <table class="tbl">
+            <thead><tr><th>申請類型</th><th>路段</th><th>預計釋放時間</th></tr></thead>
+            <tbody><tr class="empty"><td colspan="3">查無資料</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Login -->
+    <section id="screen-login" class="screen portal-body" hidden>
+      <div class="panel narrow">
+        <h3 class="panel-title">申請人登入</h3>
+        <form id="login-form" novalidate>
+          <label class="field">身分證字號
+            <input name="loginId" data-fake="idNumber" autocomplete="off" maxlength="10" placeholder="按任意鍵輸入" />
+          </label>
+          <label class="field">手機號碼
+            <input name="loginPhone" data-fake="phone" inputmode="numeric" autocomplete="off" maxlength="10" placeholder="按任意鍵輸入" />
+          </label>
+          <div class="human-check" data-check="login">
+            <button type="button" class="hc-box" aria-label="我不是機器人"></button>
+            <span class="hc-label">我不是機器人</span>
+            <span class="hc-brand">人機驗證<br /><small>模擬</small></span>
+          </div>
+          <p class="form-error" id="login-error" role="alert"></p>
+          <button type="submit" class="btn-primary">登入</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- Type -->
+    <section id="screen-type" class="screen portal-body" hidden>
+      <div class="panel">
+        <h3 class="panel-title">請選擇申請類型</h3>
+        <div class="type-grid">
+          <button type="button" class="type-card" data-type="assembly">
+            <span class="type-icon" aria-hidden="true">📣</span>
+            <strong>集會申請</strong>
+            <small>於定點舉行之集會活動</small>
+          </button>
+          <button type="button" class="type-card" data-type="march">
+            <span class="type-icon" aria-hidden="true">🚶</span>
+            <strong>集會遊行申請</strong>
+            <small>沿路線移動之遊行活動</small>
+          </button>
+          <button type="button" class="type-card" data-type="temporary">
+            <span class="type-icon" aria-hidden="true">🚧</span>
+            <strong>臨時使用道路</strong>
+            <small>施工、拍攝、市集等非集會用途</small>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Form -->
+    <section id="screen-form" class="screen portal-body" hidden>
+      <form id="app-form" class="panel" novalidate>
+        <h3 class="panel-title">集會申請書</h3>
+        <ol class="stepper"><li class="on">填寫資料</li><li>確認送出</li><li>完成</li></ol>
+
+        <fieldset>
+          <legend>一、負責人資料</legend>
+          <div class="grid-form">
+            <label class="field">姓名 <em>*</em><input name="name" data-fake="name" autocomplete="off" /></label>
+            <label class="field">身分證字號 <em>*</em><input name="idNumber" data-fake="idNumber" maxlength="10" autocomplete="off" /></label>
+            <label class="field">出生日期 <em>*</em><input name="birthDate" data-fake="birthDate" autocomplete="off" placeholder="YYYY-MM-DD" /></label>
+            <label class="field">聯絡電話 <em>*</em><input name="phone" data-fake="phone" inputmode="tel" autocomplete="off" /></label>
+            <label class="field span-2">通訊地址 <em>*</em><input name="address" data-fake="address" autocomplete="off" /></label>
+            <label class="field span-2">電子信箱 <em>*</em><input name="email" data-fake="email" autocomplete="off" /></label>
+            <div class="field span-2" data-field="bankAccount">
+              <span>銀行退款帳戶 <em>*</em></span>
+              <div class="inline">
+                <input name="bankCode" data-fake="bankCode" maxlength="3" inputmode="numeric" placeholder="代碼" class="w-code" autocomplete="off" />
+                <input name="bankAccount" data-fake="bankAccount" maxlength="16" inputmode="numeric" placeholder="帳號" autocomplete="off" />
+              </div>
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>二、集會內容</legend>
+          <div class="grid-form">
+            <label class="field span-2">集會目的 <em>*</em><textarea name="purpose" rows="2" placeholder="至少 10 個字"></textarea></label>
+            <label class="field">集會起日 <em>*</em><input type="date" name="startDate" /><small class="mission-hint">★ 任務起日：<span data-mission="startDate"></span></small></label>
+            <label class="field">開始時間 <em>*</em><select name="startTime" class="time-select"></select><small class="mission-hint">★ 任務開始：<span data-mission="start"></span></small></label>
+            <label class="field">集會迄日 <em>*</em><input type="date" name="endDate" /><small class="mission-hint">★ 任務迄日：<span data-mission="endDate"></span></small></label>
+            <label class="field">結束時間 <em>*</em><select name="endTime" class="time-select"></select><small class="mission-hint">★ 任務結束：<span data-mission="end"></span></small></label>
+            <label class="field">行政區 <em>*</em>
+              <select name="district">
+                <option value="">請選擇</option>
+                <option value="daan">大安區</option>
+                <option value="xinyi">信義區</option>
+                <option value="zhongzheng">中正區</option>
+                <option value="zhongshan">中山區</option>
+                <option value="wanhua">萬華區</option>
+              </select>
+              <small class="mission-hint">★ 任務行政區：<span data-mission="district"></span></small>
+            </label>
+            <label class="field">路段 <em>*</em>
+              <select name="location" disabled><option value="">請先選擇行政區</option></select>
+              <small class="mission-hint">★ 任務路段：<span data-mission="location"></span></small>
+            </label>
+            <label class="field">預估人數 <em>*</em><input type="number" name="headcount" min="1" step="1" /></label>
+            <label class="field">糾察員人數 <em>*</em><input type="number" name="marshals" min="0" step="1" />
+              <small class="hint">每 50 人至少 1 名</small>
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>三、代理人</legend>
+          <label class="check"><input type="checkbox" name="hasAgent" /> 委託代理人辦理</label>
+          <div class="grid-form" id="agent-fields" hidden>
+            <label class="field">代理人姓名 <em>*</em><input name="agentName" data-fake="agentName" autocomplete="off" /></label>
+            <label class="field">代理人身分證字號 <em>*</em><input name="agentId" data-fake="agentId" maxlength="10" autocomplete="off" /></label>
+            <label class="field">代理人電話 <em>*</em><input name="agentPhone" data-fake="agentPhone" inputmode="tel" autocomplete="off" /></label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>四、應備文件</legend>
+          <div class="grid-form" id="file-fields">
+            <div class="field">集會申請書 <em>*</em><div class="upload" data-file="applicationForm"><button type="button" class="btn-upload">上傳</button><span class="upload-status">尚未上傳</span></div></div>
+            <div class="field">場地管理機關同意文件 <em>*</em><div class="upload" data-file="venueConsent"><button type="button" class="btn-upload">上傳</button><span class="upload-status">尚未上傳</span></div></div>
+            <div class="field">身分證影本 <em>*</em><div class="upload" data-file="idCopy"><button type="button" class="btn-upload">上傳</button><span class="upload-status">尚未上傳</span></div></div>
+            <div class="field">糾察員名冊 <em>*</em><div class="upload" data-file="marshalRoster"><button type="button" class="btn-upload">上傳</button><span class="upload-status">尚未上傳</span></div></div>
+            <div class="field" id="agent-consent-field" hidden>代理人同意書 <em>*</em><div class="upload" data-file="agentConsent"><button type="button" class="btn-upload">上傳</button><span class="upload-status">尚未上傳</span></div></div>
+          </div>
+        </fieldset>
+
+        <p class="form-error" id="form-error" role="alert"></p>
+        <div class="actions">
+          <button type="submit" class="btn-primary">下一步</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Confirm -->
+    <section id="screen-confirm" class="screen portal-body" hidden>
+      <div class="panel">
+        <h3 class="panel-title">確認申請資料</h3>
+        <ol class="stepper"><li class="done">填寫資料</li><li class="on">確認送出</li><li>完成</li></ol>
+        <dl id="confirm-list" class="confirm-list"></dl>
+        <label class="check"><input type="checkbox" id="confirm-agree" /> 本人已詳閱申請規定，所填資料均屬實，如有不實願負法律責任。</label>
+        <div class="human-check" data-check="submit">
+          <button type="button" class="hc-box" aria-label="我不是機器人"></button>
+          <span class="hc-label">我不是機器人</span>
+          <span class="hc-brand">人機驗證<br /><small>模擬</small></span>
+        </div>
+        <p class="form-error" id="confirm-error" role="alert"></p>
+        <div class="actions">
+          <button type="button" class="btn-secondary" id="btn-back-edit">返回修改</button>
+          <button type="button" class="btn-primary" id="btn-submit">確認送出</button>
+        </div>
+      </div>
+    </section>
+
+    <footer class="portal-footer">
+      <p>🎮 借用凱達格蘭大道大作戰 模擬遊戲｜內容僅供遊戲使用｜非臺北市政府官方網站</p>
+    </footer>
+  </div>
+
+  <!-- ===== Result ===== -->
+  <main id="screen-result" class="screen lobby" hidden>
+    <div class="lobby-card result-card">
+      <p class="lobby-kicker">借用凱達格蘭大道大作戰・模擬申請完成</p>
+      <h1>完成申請！</h1>
+      <p class="sim-note">這是遊戲結果，沒有任何真實申請被送出。</p>
+      <p class="result-time" id="result-time"></p>
+      <dl class="result-breakdown" id="result-breakdown"></dl>
+      <p id="result-rank" class="result-rank"></p>
+      <section class="result-board">
+        <h2>本機排行榜</h2>
+        <ol id="result-board" class="board"></ol>
+      </section>
+      <div class="actions center">
+        <button type="button" class="btn-start" id="btn-again">再挑戰一次</button>
+      </div>
+    </div>
+  </main>
+
+  <!-- ===== Modals ===== -->
+  <div class="modal-backdrop" id="modal-privacy" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="privacy-title">
+      <h3 id="privacy-title">隱私權及資訊安全政策 <span class="sim-tag">遊戲模擬</span></h3>
+      <div class="modal-body">
+        <p>為辦理使用道路集會申請，本平台將蒐集申請人之姓名、身分證字號、出生日期、銀行退款帳戶、通訊地址、聯絡電話、電子信箱等個人資料。</p>
+        <p>委託代理人辦理者，另蒐集代理人之姓名、身分證字號、聯絡電話。申請集會者應上傳糾察員名冊、集會申請書、場地同意書及身分證影本。</p>
+        <p>前述資料僅於申請審核目的範圍內使用。如您不同意，將無法進行申請。</p>
+        <p class="sim-note">（模擬遊戲：實際上不會蒐集或傳送任何資料。）</p>
+      </div>
+      <div class="modal-actions">
+        <span class="modal-sim">🎮 遊戲模擬畫面</span>
+        <button type="button" class="btn-secondary" id="btn-privacy-no">不同意</button>
+        <button type="button" class="btn-primary" id="btn-privacy-yes">同意</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="modal-rules" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="rules-title">
+      <h3 id="rules-title">使用道路集會之路權申請須符合以下規定 <span class="sim-tag">遊戲模擬</span></h3>
+      <div class="modal-body" id="rules-body">
+        <h4>一、申請方式</h4>
+        <p>集會應由負責人以本平台提出申請，可申請跨日集會。（遊戲模擬：本局不限制申請期限。）</p>
+        <h4>二、申請時必備證件及資格</h4>
+        <p>應備集會申請書、場地管理機關同意文件、國民身分證影本及糾察員名冊；委託代理人者，另備代理人同意書。</p>
+        <h4>三、負責人、代理人及糾察員資格</h4>
+        <p>未滿 20 歲、未具中華民國國籍，或有其他法定消極資格者，不得為負責人、代理人或糾察員。</p>
+        <h4>四、補件</h4>
+        <p>審核如需補件，系統將以電子郵件通知，申請人應於 4 小時內完成補件，逾期退件。</p>
+        <h4>五、限制事項</h4>
+        <p>主管機關得就集會之時間、處所、人數及維持秩序等事項為必要之限制。</p>
+        <h4>六、其他</h4>
+        <p>同一路段同一時段以先完成申請者優先審核。</p>
+        <p class="scroll-end">— 請捲動至此以啟用確定按鈕 —</p>
+      </div>
+      <div class="modal-actions">
+        <span class="modal-sim">🎮 遊戲模擬畫面</span>
+        <button type="button" class="btn-primary" id="btn-rules-ok" disabled>確定</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
