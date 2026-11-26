@@ -2,7 +2,7 @@ import {
   isValidTwId, isValidPhone, validateApplication, makeMission, formatDuration, makePersona,
   missionPeriodLabel,
 } from './validators.js';
-import { saveResult, getRankedResults } from './scores.js';
+import { beginRun, submitResult, getLeaderboard, isReservedName, isOnlineConfigured } from './scores.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -59,6 +59,8 @@ const state = {
   running: false,
   rafId: 0,
   formData: null,
+  run: null,
+  runPromise: null,
   persona: makePersona(),
 };
 
@@ -121,7 +123,9 @@ function startRun() {
   resetPortal();
   showPortal('screen-home');
   tick();
-
+  // Open a server-timed run in the background; the local timer doesn't wait for it.
+  state.run = null;
+  state.runPromise = beginRun().then((run) => (state.run = run));
 }
 
 function setHudState(cls, label) {
@@ -146,7 +150,14 @@ async function finish(caseNo) {
   const total = timeMs + state.penaltyMs;
   $('#hud-time').textContent = formatDuration(total);
   setHudState('done', '完成');
-  const record = await saveResult({
+  $('#result-time').textContent = formatDuration(total);
+  $('#result-breakdown').innerHTML = '';
+  $('#result-rank').textContent = '成績登錄中…';
+  $('#result-board').replaceChildren();
+  showTop('result');
+
+  await state.runPromise;
+  const res = await submitResult({
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     player: state.player,
     timeMs,
@@ -155,19 +166,21 @@ async function finish(caseNo) {
     success: true,
     caseNo,
     at: new Date().toISOString(),
-  });
-  const ranked = await getRankedResults();
-  const rank = ranked.findIndex((r) => r.id === record.id) + 1;
+  }, state.run);
 
-  $('#result-time').textContent = formatDuration(total);
+  const official = res.record.timeMs + res.record.penaltyMs;
+  $('#result-time').textContent = formatDuration(official);
   $('#result-breakdown').innerHTML = `
-    <dt>實際操作</dt><dd>${formatDuration(timeMs)}</dd>
-    <dt>罰秒</dt><dd>+${(state.penaltyMs / 1000).toFixed(0)} 秒</dd>
-    <dt>錯誤次數</dt><dd>${state.errors}</dd>
+    <dt>${res.online ? '伺服器計時' : '實際操作'}</dt><dd>${formatDuration(res.record.timeMs)}</dd>
+    <dt>罰秒</dt><dd>+${(res.record.penaltyMs / 1000).toFixed(0)} 秒</dd>
+    <dt>錯誤次數</dt><dd>${res.record.errors}</dd>
+    ${res.online ? `<dt>本機計時</dt><dd>${formatDuration(total)}</dd>` : ''}
     <dt>模擬案件編號</dt><dd>${caseNo}</dd>`;
-  $('#result-rank').textContent = `本機排名：第 ${rank} 名（共 ${ranked.length} 筆紀錄）`;
-  renderBoardInto($('#result-board'), ranked, record.id);
-  showTop('result');
+  const scope = res.online ? '線上' : '本機';
+  $('#result-rank').textContent = `${scope}排名：第 ${res.rank} 名（共 ${res.total} 筆紀錄）`;
+  $('#result-board-title').textContent = `${scope}排行榜`;
+  $('#result-note').textContent = boardNote(res);
+  renderBoardInto($('#result-board'), res.top, { record: res.record, rank: res.rank });
   renderBoard();
 }
 
@@ -514,23 +527,32 @@ $$('.upload').forEach((box) => {
 // ---------- Lobby ----------
 const BOARD_SIZE = 10;
 
-/** Render ranked results; highlight `currentId` and append it if it falls outside the top 10. */
-function renderBoardInto(ol, ranked, currentId = null) {
+const ERROR_NOTES = {
+  too_fast: '這次完成得太快，伺服器無法採計，成績只存在本機。',
+  expired: '這局超過一小時，線上成績已失效，成績只存在本機。',
+  rate_limited: '開局次數太頻繁，這局未登錄線上排行榜。',
+  not_started: '開局時無法連上線上排行榜，成績只存在本機。',
+};
+
+function boardNote(res) {
+  if (res.online) return '';
+  if (!isOnlineConfigured()) return '';
+  return ERROR_NOTES[res.error] || '線上排行榜暫時無法連線，成績只存在本機。';
+}
+
+/**
+ * Render the top list. `current` ({ record, rank }) is highlighted, or appended after a
+ * gap when it falls outside the list.
+ */
+function renderBoardInto(ol, top, current = null) {
   ol.replaceChildren();
-  if (!ranked.length) {
-    const li = document.createElement('li');
-    li.className = 'empty';
-    li.textContent = '尚無紀錄';
-    ol.appendChild(li);
-    return;
-  }
-  const rows = ranked.slice(0, BOARD_SIZE).map((r, i) => [i + 1, r]);
-  const idx = ranked.findIndex((r) => r.id === currentId);
-  if (idx >= BOARD_SIZE) rows.push(['…', null], [idx + 1, ranked[idx]]);
+  const rows = top.map((r, i) => [i + 1, r]);
+  const inList = current && top.some((r) => r.id === current.record.id);
+  if (current && !inList) rows.push(['…', null], [current.rank, current.record]);
   for (const [rank, r] of rows) {
     const li = document.createElement('li');
     if (!r) { li.className = 'gap'; li.textContent = '…'; ol.appendChild(li); continue; }
-    if (r.id && r.id === currentId) li.className = 'me';
+    if (current && r.id === current.record.id) li.className = 'me';
     const no = document.createElement('span');
     no.className = 'rank';
     no.textContent = rank;
@@ -547,7 +569,12 @@ function renderBoardInto(ol, ranked, currentId = null) {
 }
 
 async function renderBoard() {
-  renderBoardInto($('#local-board'), await getRankedResults());
+  const board = await getLeaderboard();
+  $('#lobby-board-title').textContent = board.online ? '線上排行榜' : '本機排行榜';
+  $('#lobby-board-note').textContent = board.online
+    ? `共 ${board.total} 筆紀錄，伺服器計時。`
+    : isOnlineConfigured() ? '線上排行榜暫時無法連線，顯示本機紀錄。' : '成績只存在你的瀏覽器。';
+  renderBoardInto($('#local-board'), board.top);
 }
 
 function initLobby() {
@@ -564,7 +591,13 @@ function initLobby() {
 $('#lobby-form').addEventListener('submit', (ev) => {
   ev.preventDefault();
   const f = ev.currentTarget;
-  state.player = f.player.value.trim() || '匿名';
+  const name = f.player.value.trim() || '匿名';
+  if (isReservedName(name)) {
+    toast('「Wanna Talk」是紀錄保持人的名字，請換一個暱稱', 'warn');
+    f.player.focus();
+    return;
+  }
+  state.player = name;
   localStorage.setItem('ketagalan-sim:player', state.player);
   startRun();
 });

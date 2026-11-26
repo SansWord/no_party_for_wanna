@@ -1,0 +1,15 @@
+{
+  "name": "no-party-leaderboard",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "db:init:local": "wrangler d1 execute no-party-leaderboard --local --file=schema.sql",
+    "db:init:remote": "wrangler d1 execute no-party-leaderboard --remote --file=schema.sql",
+    "dev": "wrangler dev --port 8787",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.168.0"
+  }
+}

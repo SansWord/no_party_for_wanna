@@ -32,17 +32,51 @@ ES modules need an HTTP server; opening `index.html` via `file://` won't work.
 - `index.html`, `styles.css` — UI
 - `js/app.js` — screen flow, timer, fake typing, uploads, human check, results
 - `js/validators.js` — pure validation (unit-tested)
-- `js/scores.js` — score storage; localStorage now, swap for an API to build the global leaderboard
+- `js/scores.js` — online leaderboard client with localStorage fallback; `js/config.js` — API URL (written at deploy)
 - `tests/validators.test.js`
 
 ## Seed record
 
-`SEED_RECORDS` in `js/scores.js` puts **Wanna Talk — 00:00.33** at the top of every board; players compete against it. Seed the online leaderboard's database with the same row.
+`SEED_RECORDS` in `js/scores.js` puts **Wanna Talk — 00:00.33** at the top of every board; players compete against it. `leaderboard/schema.sql` seeds the online database with the same row.
 
 ## Social preview image
 
-`og.png` (1200×630) is rendered from `og/og.html` with headless Chrome (Playwright screenshot at 1200×630). Before deploying, make `og:image` / `og:url` in `index.html` absolute URLs.
+`og.png` (1200×630) is rendered from `og/og.html` with headless Chrome (Playwright screenshot at 1200×630). The Pages workflow makes `og:image` / `og:url` absolute at deploy.
 
-## Leaderboard (next)
+## Online leaderboard (`leaderboard/`)
 
-`js/scores.js` exposes `saveResult(record)` / `getRankedResults()` (records carry an `id` so the current run can be highlighted). Replace with `fetch` calls to a backend. Since the timer runs client-side, a public board will need server-side timing (server issues a run token at start, stamps time at submit) to deter faked scores.
+Cloudflare Worker + D1. The server measures each run (start request → finish request), so clients can't post arbitrary times.
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/runs` | Player pressed 開始計時 → `{ runId }` (rate-limited per hashed IP) |
+| `POST /api/runs/:id/finish` | `{ player, penaltyMs, errors }` → official record, rank, top 10. One finish per run; < 15 s or > 1 h is rejected; `Wanna Talk` is a reserved name |
+| `GET /api/leaderboard?limit=10` | Top list + total |
+
+The game falls back to localStorage (with a notice) when the API is unset, unreachable, or rejects a run.
+
+Local dev:
+
+```sh
+cd leaderboard && npm install
+npm run db:init:local   # schema + Wanna Talk seed
+npm run dev             # http://localhost:8787
+# game: http://localhost:8080/?api=http://localhost:8787
+```
+
+Deploy (once):
+
+```sh
+cd leaderboard
+npx wrangler login
+npx wrangler d1 create no-party-leaderboard      # paste database_id into wrangler.jsonc
+npm run db:init:remote
+npx wrangler secret put IP_SALT                  # any random string
+npm run deploy                                   # prints https://no-party-leaderboard.<account>.workers.dev
+```
+
+Then set the repo variable `LEADERBOARD_API` to that URL (GitHub → Settings → Variables → Actions) and re-run the Pages workflow. `ALLOWED_ORIGINS` in `wrangler.jsonc` must include the Pages origin.
+
+## GitHub Pages
+
+`.github/workflows/pages.yml` runs the tests, copies the static files to `_site/`, writes `js/config.js` from `LEADERBOARD_API`, adds `?v=<commit>` to every CSS/JS reference (cache-busting), and rewrites `og:url` / `og:image` to absolute URLs.

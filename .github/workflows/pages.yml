@@ -1,0 +1,72 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Unit tests
+        run: |
+          npm test
+          (cd leaderboard && node --test test/*.test.js)
+
+      - id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Build site
+        env:
+          BASE_URL: ${{ steps.pages.outputs.base_url }}
+          LEADERBOARD_API: ${{ vars.LEADERBOARD_API }}
+        run: |
+          set -euo pipefail
+          V="${GITHUB_SHA::8}"
+          mkdir -p _site
+          cp index.html styles.css og.png _site/
+          cp -r js _site/js
+
+          # Online leaderboard endpoint comes from the repo variable LEADERBOARD_API (empty = local-only).
+          printf "export const LEADERBOARD_API = '%s';\n" "$LEADERBOARD_API" > _site/js/config.js
+
+          # Cache-busting: version every CSS/JS reference so returning players never mix old and new modules.
+          sed -i "s#href=\"styles.css\"#href=\"styles.css?v=$V\"#; s#src=\"js/app.js\"#src=\"js/app.js?v=$V\"#" _site/index.html
+          sed -i -E "s#from '\./([A-Za-z0-9_-]+)\.js'#from './\1.js?v=$V'#g" _site/js/*.js
+
+          # Social previews need absolute URLs.
+          sed -i "s#<meta property=\"og:url\" content=\"./\" />#<meta property=\"og:url\" content=\"$BASE_URL/\" />#; s#<meta property=\"og:image\" content=\"og.png\" />#<meta property=\"og:image\" content=\"$BASE_URL/og.png?v=$V\" />#" _site/index.html
+
+          grep -q "v=$V" _site/index.html
+          grep -q "og:image\" content=\"http" _site/index.html
+          ls -R _site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

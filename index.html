@@ -7,9 +7,10 @@
   <meta name="description" content="借用凱達格蘭大道大作戰 — 非官方模擬遊戲：計時挑戰你能多快完成凱達格蘭大道使用道路集會申請。" />
   <meta property="og:locale" content="zh_TW" />
   <meta property="og:type" content="website" />
+  <meta property="og:url" content="./" />
   <meta property="og:title" content="借用凱達格蘭大道大作戰｜你能借到凱達格蘭大道嗎？" />
   <meta property="og:description" content="非官方計時模擬遊戲：填完凱道路權申請要多久？目前紀錄 Wanna Talk 00:00.33，來挑戰！" />
-  <!-- TODO at deploy: make og:image/og:url absolute (e.g. https://<user>.github.io/no_party_for_wanna/og.png); crawlers ignore relative URLs. -->
+  <!-- og:url / og:image are rewritten to absolute URLs by .github/workflows/pages.yml at deploy. -->
   <meta property="og:image" content="og.png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
@@ -80,14 +81,14 @@
           <li>成績＝實際操作時間＋罰秒，越快排名越前面。</li>
           <li>個資欄位按任意鍵就會自動打出假資料，每局隨機產生一份假身分。</li>
           <li>附件按「上傳」即可，模擬上傳需要一點時間。</li>
-          <li>成績只存在你的瀏覽器。</li>
+          <li>線上排行榜由伺服器計時；連不上時成績會先存在你的瀏覽器。</li>
         </ul>
       </details>
 
       <section class="lobby-board">
-        <h2>本機排行榜</h2>
+        <h2 id="lobby-board-title">排行榜</h2>
         <ol id="local-board" class="board"></ol>
-        <p class="board-note">全球排行榜即將推出。</p>
+        <p class="board-note" id="lobby-board-note"></p>
       </section>
     </div>
     <p class="disclaimer">本網站為模擬遊戲，與臺北市政府無關，不會送出任何真實申請。實際申請請洽官方平台。</p>
@@ -96,10 +97,6 @@
   <!-- ===== Simulated portal ===== -->
   <div id="portal" class="portal" hidden>
     <div class="sim-ribbon">模擬畫面</div>
-    <details class="persona-float" open>
-      <summary>假身分資料卡</summary>
-      <dl class="persona-list" data-persona-list></dl>
-    </details>
     <div class="portal-banner">
       <div class="portal-seal" aria-hidden="true">北</div>
       <div>
@@ -108,6 +105,10 @@
       </div>
     </div>
     <div class="sim-strip" role="note">🎮 你正在玩 <b>借用凱達格蘭大道大作戰</b> 計時模擬遊戲：這不是政府網站，所有資料皆為假資料，不會送出任何真實申請。</div>
+    <details class="persona-float">
+      <summary>🪪 假身分資料卡（個資欄位按任意鍵會自動打出這些資料，點此展開／收合）</summary>
+      <dl class="persona-list" data-persona-list></dl>
+    </details>
 
     <!-- Home -->
     <section id="screen-home" class="screen portal-body">
@@ -312,8 +313,9 @@
       <dl class="result-breakdown" id="result-breakdown"></dl>
       <p id="result-rank" class="result-rank"></p>
       <section class="result-board">
-        <h2>本機排行榜</h2>
+        <h2 id="result-board-title">排行榜</h2>
         <ol id="result-board" class="board"></ol>
+        <p class="board-note" id="result-note"></p>
       </section>
       <div class="actions center">
         <button type="button" class="btn-start" id="btn-again">再挑戰一次</button>

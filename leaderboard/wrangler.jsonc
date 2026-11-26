@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "no-party-leaderboard",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-01",
+  "observability": { "enabled": true },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "no-party-leaderboard",
+      // Replace with the id printed by `npx wrangler d1 create no-party-leaderboard`.
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  "vars": {
+    // Comma-separated browser origins allowed to call the API.
+    "ALLOWED_ORIGINS": "https://sansword.github.io,http://localhost:8080"
+  }
+  // Secret (optional): `npx wrangler secret put IP_SALT` — salts the hashed IPs used for rate limiting.
+}
