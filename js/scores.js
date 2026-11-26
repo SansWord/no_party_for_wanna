@@ -86,9 +86,10 @@ function localPage(start, limit = TOP_N) {
   };
 }
 
+/** Page containing a record, aligned to fixed pages (rank 33 → ranks 31–40). */
 function localPageAround(id, limit = TOP_N) {
   const idx = localRanked().findIndex((r) => r.id === id);
-  return localPage(idx < 0 ? 0 : Math.max(0, idx - Math.floor((limit - 1) / 2)), limit);
+  return localPage(idx < 0 ? 0 : idx - (idx % limit), limit);
 }
 
 function localSubmit(record) {
@@ -143,10 +144,11 @@ export async function submitResult(record, run) {
 /**
  * One page of the leaderboard. Pass nothing for the first page, `{ after }` / `{ before }`
  * with a cursor from a previous page, or `{ around: id }` for the page containing a record.
- * Cursors from the local fallback start with "L".
+ * `{ last: true }` gives the last page. Pages are aligned to ranks 10n+1. Cursors from the
+ * local fallback start with "L".
  * @returns {Promise<Page>}
  */
-export async function getLeaderboardPage({ after, before, around } = {}) {
+export async function getLeaderboardPage({ after, before, around, last } = {}) {
   const local = (after && after.startsWith('L')) || (before && before.startsWith('L'));
   if (apiBase() && !local) {
     try {
@@ -154,6 +156,7 @@ export async function getLeaderboardPage({ after, before, around } = {}) {
       if (after) q.set('after', after);
       else if (before) q.set('before', before);
       else if (around) q.set('around', around);
+      else if (last) q.set('last', '1');
       return { online: true, ...(await api(`/api/leaderboard?${q}`)) };
     } catch (err) {
       console.warn('[leaderboard] fetch failed, showing local', err);
@@ -162,5 +165,9 @@ export async function getLeaderboardPage({ after, before, around } = {}) {
   if (after) return localPage(Number(after.slice(1)));
   if (before) return localPage(Math.max(0, Number(before.slice(1)) - 1 - TOP_N));
   if (around) return localPageAround(around);
+  if (last) {
+    const total = localRanked().length;
+    return localPage(Math.floor(Math.max(0, total - 1) / TOP_N) * TOP_N);
+  }
   return localPage(0);
 }

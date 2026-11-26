@@ -44,12 +44,32 @@ test('offline: paging walks the whole board 10 at a time, both directions', asyn
   assert.equal(new Set(seen).size, 25);
 });
 
-test('offline: result page is centred on the new record', async () => {
+test('offline: result page is the aligned page containing the new record', async () => {
   for (let i = 0; i < 30; i++) await submitResult(rec(i, 10_000 + i * 1000), null);
   const res = await submitResult(rec(99, 25_500), null); // between P15 and P16 → rank 18
   assert.equal(res.rank, 18);
   assert.ok(res.page.rows.some((r) => r.id === 'p99' && r.rank === 18));
-  assert.equal(res.page.rows[0].rank, 14);
+  assert.deepEqual([res.page.rows[0].rank, res.page.rows.at(-1).rank], [11, 20]);
+  // Paging on from there stays aligned.
+  const next = await getLeaderboardPage({ after: res.page.next });
+  assert.deepEqual([next.rows[0].rank, next.rows.at(-1).rank], [21, 30]);
+  const prev = await getLeaderboardPage({ before: res.page.prev });
+  assert.deepEqual([prev.rows[0].rank, prev.rows.at(-1).rank], [1, 10]);
+});
+
+test('offline: rank 33 lands on page 31–40', async () => {
+  for (let i = 0; i < 39; i++) await submitResult(rec(i, 10_000 + i * 1000), null); // ranks 2..40
+  const page = await getLeaderboardPage({ around: 'p31' }); // p31 is rank 33
+  assert.ok(page.rows.some((r) => r.id === 'p31' && r.rank === 33));
+  assert.deepEqual([page.rows[0].rank, page.rows.at(-1).rank], [31, 40]);
+});
+
+test('offline: last page is aligned (39 records → 31–39)', async () => {
+  for (let i = 0; i < 38; i++) await submitResult(rec(i, 10_000 + i * 1000), null);
+  const last = await getLeaderboardPage({ last: true });
+  assert.deepEqual([last.rows[0].rank, last.rows.at(-1).rank, last.next], [31, 39, null]);
+  const prev = await getLeaderboardPage({ before: last.prev });
+  assert.deepEqual([prev.rows[0].rank, prev.rows.at(-1).rank], [21, 30]);
 });
 
 test('Wanna Talk is a reserved nickname', () => {

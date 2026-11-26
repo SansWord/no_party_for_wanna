@@ -2,7 +2,7 @@
 //
 //   POST /api/runs               → { runId }                 (player pressed 開始計時)
 //   POST /api/runs/:id/finish    → { record, rank, total, page }   (page = rows around the player)
-//   GET  /api/leaderboard        → page: first page, or ?after=<cursor> / ?before=<cursor> / ?around=<id>
+//   GET  /api/leaderboard        → page: first page, or ?after=<cursor> / ?before=<cursor> / ?around=<id> / ?last=1
 //
 // A page is { total, rows: [{ rank, ... }], prev, next } with keyset cursors, so every page
 // reads only `limit` rows from the index (no OFFSET, which D1 would bill row by row).
@@ -51,6 +51,7 @@ export default {
           return json(await pageFrom(env, cursor, q.has('after') ? 'after' : 'before', limit));
         }
         if (q.has('around')) return json(await pageAround(env, q.get('around'), limit));
+        if (q.has('last')) return json(await lastPage(env, limit));
         if (!boardCache || boardCache.limit !== limit || Date.now() - boardCache.at > BOARD_CACHE_MS) {
           boardCache = { at: Date.now(), limit, body: await firstPage(env, limit) };
         }
@@ -173,6 +174,17 @@ async function firstPage(env, limit) {
   return toPage(results, 1, await totalCount(env));
 }
 
+/** Last aligned page: with 39 records and limit 10 → ranks 31–39. Reads only those rows. */
+async function lastPage(env, limit) {
+  const total = await totalCount(env);
+  if (!total) return toPage([], 1, 0);
+  const count = ((total - 1) % limit) + 1;
+  const { results } = await env.DB.prepare(
+    `SELECT ${COLS} FROM scores ORDER BY total_ms DESC, created_at DESC LIMIT ?`,
+  ).bind(count).all();
+  return toPage(results.reverse(), total - results.length + 1, total);
+}
+
 async function pageFrom(env, cursor, dir, limit) {
   const key = { total_ms: cursor.totalMs, created_at: cursor.createdAt };
   const total = await totalCount(env);
@@ -181,9 +193,9 @@ async function pageFrom(env, cursor, dir, limit) {
   return toPage(rows, cursor.rank - rows.length, total);
 }
 
-/** Page containing a row: up to half a page of faster rows, the row itself, then slower rows. */
+/** Page containing a row, aligned to fixed pages: rank 33 with limit 10 → ranks 31–40. */
 async function pageAroundRow(env, key, rank, limit) {
-  const before = await rowsBefore(env, key, Math.min(Math.floor((limit - 1) / 2), rank - 1));
+  const before = await rowsBefore(env, key, (rank - 1) % limit);
   const from = await rowsAfter(env, key, limit - before.length, true);
   return toPage([...before, ...from], rank - before.length, await totalCount(env));
 }

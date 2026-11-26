@@ -582,7 +582,7 @@ function boardNote(res) {
  */
 function makeBoard(ol, pagerName, onPage = () => {}) {
   const pager = $(`.pager[data-pager="${pagerName}"]`);
-  const [prevBtn, nextBtn] = [$('[data-dir=prev]', pager), $('[data-dir=next]', pager)];
+  const [firstBtn, prevBtn, nextBtn, lastBtn] = ['first', 'prev', 'next', 'last'].map((d) => $(`[data-dir=${d}]`, pager));
   const info = $('.pager-info', pager);
   let current = null;
   let highlight = null;
@@ -609,19 +609,21 @@ function makeBoard(ol, pagerName, onPage = () => {}) {
     const first = page.rows[0];
     const last = page.rows.at(-1);
     info.textContent = first ? `第 ${first.rank}–${last.rank} 名（共 ${page.total} 筆）` : '尚無紀錄';
-    prevBtn.disabled = !page.prev;
-    nextBtn.disabled = !page.next;
+    firstBtn.disabled = prevBtn.disabled = !page.prev;
+    nextBtn.disabled = lastBtn.disabled = !page.next;
     pager.hidden = !page.prev && !page.next && page.rows.length <= 1;
     onPage(page);
   }
 
   async function go(params) {
-    prevBtn.disabled = nextBtn.disabled = true;
+    firstBtn.disabled = prevBtn.disabled = nextBtn.disabled = lastBtn.disabled = true;
     render(await getLeaderboardPage(params));
   }
 
   prevBtn.addEventListener('click', () => current?.prev && go({ before: current.prev }));
   nextBtn.addEventListener('click', () => current?.next && go({ after: current.next }));
+  firstBtn.addEventListener('click', () => current?.prev && go({}));
+  lastBtn.addEventListener('click', () => current?.next && go({ last: true }));
 
   return {
     show(page, highlightId = null) { highlight = highlightId; render(page); },

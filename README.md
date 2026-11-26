@@ -51,7 +51,7 @@ Cloudflare Worker + D1. The server measures each run (start request → finish r
 |---|---|
 | `POST /api/runs` | Player pressed 開始計時 → `{ runId }` (rate-limited per hashed IP) |
 | `POST /api/runs/:id/finish` | `{ player, penaltyMs, errors }` → official record, rank, and the page around it. One finish per run; < 15 s or > 1 h is rejected; `Wanna Talk` is a reserved name. Rank comes from 100 ms `score_buckets` + an index range, and the total from `stats`, so no request scans the scores table (D1 bills per row scanned) |
-| `GET /api/leaderboard?limit=10[&after=<cursor>\|&before=<cursor>\|&around=<id>]` | One page `{ total, rows[{rank,…}], prev, next }`. Keyset cursors (`total_ms_created_at_rank`), so each page reads only `limit` index rows — no OFFSET |
+| `GET /api/leaderboard?limit=10[&after=<cursor>\|&before=<cursor>\|&around=<id>\|&last=1]` | One page, aligned to ranks 10n+1 (`around` → the page containing that record; `last` → final page) `{ total, rows[{rank,…}], prev, next }`. Keyset cursors (`total_ms_created_at_rank`), so each page reads only `limit` index rows — no OFFSET |
 
 The game falls back to localStorage (with a notice) when the API is unset, unreachable, or rejects a run.
 

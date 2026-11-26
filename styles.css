@@ -273,7 +273,14 @@ select.is-mission { border-color: #1a9b4b !important; background: #effaf2; box-s
 }
 
 /* ===== Leaderboard pager ===== */
-.pager { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; font-size: 13px; }
+.pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; font-size: 13px; }
+.pager-group { display: flex; gap: 6px; }
+@media (max-width: 480px) {
+  .pager { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+  .pager .pager-info { grid-column: 1 / -1; grid-row: 1; text-align: center; }
+  .pager-group { display: contents; }
+  .pager-group button { min-width: 0; padding: 6px 0; font-size: 11px; letter-spacing: -.02em; white-space: nowrap; }
+}
 .pager button { background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 4px 12px; color: var(--brand-dark); }
 .pager button:hover:not(:disabled) { border-color: var(--brand); }
 .pager button:disabled { opacity: .4; cursor: default; }
