@@ -10,8 +10,8 @@ const TOP_N = 10;
 export const SEED_RECORDS = [
   {
     id: 'seed-wanna-talk',
-    player: 'Wanna Talk',
-    timeMs: 330,
+    player: 'Say Goodnight',
+    timeMs: 350,
     penaltyMs: 0,
     errors: 0,
     success: true,
@@ -23,7 +23,7 @@ export const SEED_RECORDS = [
 
 /** Names players may not use (they would impersonate the seed record). */
 export function isReservedName(name) {
-  return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ') === 'wanna talk';
+  return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ') === 'say goodnight';
 }
 
 /**

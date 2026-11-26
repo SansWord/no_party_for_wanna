@@ -660,7 +660,7 @@ $('#lobby-form').addEventListener('submit', (ev) => {
   const f = ev.currentTarget;
   const name = f.player.value.trim() || '匿名';
   if (isReservedName(name)) {
-    toast('「Wanna Talk」是紀錄保持人的名字，請換一個暱稱', 'warn');
+    toast('「Say Goodnight」是紀錄保持人的名字，請換一個暱稱', 'warn');
     f.player.focus();
     return;
   }

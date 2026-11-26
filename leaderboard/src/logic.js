@@ -5,7 +5,7 @@ export const MIN_RUN_MS = 15_000;          // no human finishes the full form fa
 export const MAX_RUN_MS = 60 * 60 * 1000;  // runs expire after an hour
 export const MAX_PENALTY_MS = 600_000;
 export const MAX_ERRORS = 200;
-export const RESERVED_NAMES = ['wanna talk'];
+export const RESERVED_NAMES = ['say goodnight'];
 export const STARTS_PER_MINUTE = 20;
 
 /** Normalize a nickname: strip control chars, collapse spaces, cap length (by code point). */

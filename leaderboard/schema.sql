@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS score_buckets (
 
 -- The record everyone competes against.
 INSERT OR IGNORE INTO scores (id, player, time_ms, penalty_ms, errors, total_ms, created_at, seed)
-VALUES ('seed-wanna-talk', 'Wanna Talk', 330, 0, 0, 330, 1795651200000, 1);
+VALUES ('seed-wanna-talk', 'Say Goodnight', 350, 0, 0, 350, 1795651200000, 1);
 
 -- Initialise counters from existing rows (no-op when they already exist).
 INSERT OR IGNORE INTO stats (key, value) SELECT 'total', COUNT(*) FROM scores;

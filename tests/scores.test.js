@@ -13,11 +13,12 @@ beforeEach(() => store.clear());
 
 const rec = (i, ms) => ({ id: `p${i}`, player: `P${i}`, timeMs: ms, penaltyMs: 0, errors: 0 });
 
-test('offline: Wanna Talk (0.33s) is always on the board', async () => {
+test('offline: Say Goodnight (0.35s) is always on the board', async () => {
   const page = await getLeaderboardPage();
   assert.equal(page.online, false);
   assert.equal(page.total, 1);
-  assert.deepEqual(page.rows.map((r) => [r.rank, r.player]), [[1, 'Wanna Talk']]);
+  assert.deepEqual(page.rows.map((r) => [r.rank, r.player]), [[1, 'Say Goodnight']]);
+  assert.equal(page.rows[0].timeMs + page.rows[0].penaltyMs, 350);
   assert.equal(page.prev, null);
   assert.equal(page.next, null);
 });
@@ -27,7 +28,7 @@ test('offline: players rank against the seed by penalty-inclusive time', async (
   await submitResult({ id: 'a', player: 'A', timeMs: 60000, penaltyMs: 5000, errors: 1 }, null);
   const res = await submitResult({ id: 'b', player: 'B', timeMs: 200, penaltyMs: 0, errors: 0 }, null);
   assert.equal(res.rank, 1);
-  assert.deepEqual(res.page.rows.map((r) => r.player), ['B', 'Wanna Talk', 'A']);
+  assert.deepEqual(res.page.rows.map((r) => r.player), ['B', 'Say Goodnight', 'A']);
 });
 
 test('offline: paging walks the whole board 10 at a time, both directions', async () => {
@@ -72,7 +73,7 @@ test('offline: last page is aligned (39 records → 31–39)', async () => {
   assert.deepEqual([prev.rows[0].rank, prev.rows.at(-1).rank], [21, 30]);
 });
 
-test('Wanna Talk is a reserved nickname', () => {
-  assert.ok(isReservedName(' wanna   TALK '));
-  assert.ok(!isReservedName('Wanna Talker'));
+test('Say Goodnight is a reserved nickname', () => {
+  assert.ok(isReservedName(' say   GOODNIGHT '));
+  assert.ok(!isReservedName('Say Goodnights'));
 });

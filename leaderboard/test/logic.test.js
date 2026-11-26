@@ -11,10 +11,10 @@ test('sanitizePlayer trims, strips control chars, caps at 20 code points', () =>
   assert.equal(sanitizePlayer(undefined), '匿名');
 });
 
-test('Wanna Talk is reserved in any casing/spacing', () => {
-  assert.ok(isReservedName('Wanna Talk'));
-  assert.ok(isReservedName('  wanna   TALK '));
-  assert.ok(!isReservedName('Wanna Talk 2'));
+test('Say Goodnight is reserved in any casing/spacing', () => {
+  assert.ok(isReservedName('Say Goodnight'));
+  assert.ok(isReservedName('  say   GOODNIGHT '));
+  assert.ok(!isReservedName('Say Goodnight 2'));
 });
 
 test('validateFinish enforces server time window and sane penalties', () => {
@@ -27,7 +27,7 @@ test('validateFinish enforces server time window and sane penalties', () => {
   assert.equal(validateFinish({ ...base, penaltyMs: 1500 }).error, 'bad_penalty');
   assert.equal(validateFinish({ ...base, penaltyMs: -1000 }).error, 'bad_penalty');
   assert.equal(validateFinish({ ...base, errors: 1.5 }).error, 'bad_errors');
-  assert.equal(validateFinish({ ...base, player: 'wanna talk' }).error, 'name_reserved');
+  assert.equal(validateFinish({ ...base, player: 'say goodnight' }).error, 'name_reserved');
 });
 
 test('CORS only echoes allowed origins', () => {
