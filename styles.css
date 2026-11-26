@@ -278,3 +278,12 @@ select.is-mission { border-color: #1a9b4b !important; background: #effaf2; box-s
 .pager button:hover:not(:disabled) { border-color: var(--brand); }
 .pager button:disabled { opacity: .4; cursor: default; }
 .pager-info { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* ===== Keep the timer pinned on phones =====
+   iOS zooms into inputs under 16px, and while zoomed or with the keyboard open, position:fixed
+   follows the layout viewport, so the HUD slides off-screen. 16px inputs stop the zoom;
+   js/app.js (pinHudToVisualViewport) re-anchors the HUD to the visual viewport for the rest. */
+@media (max-width: 640px), (pointer: coarse) {
+  input, select, textarea { font-size: 16px !important; }
+}
+.hud, .toast-stack { transform-origin: 0 0; will-change: transform; }

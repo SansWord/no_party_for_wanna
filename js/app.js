@@ -651,6 +651,30 @@ $('#btn-again').addEventListener('click', () => {
   $('#player-name').focus();
 });
 
+// Keep the HUD (and toasts under it) glued to what the player actually sees: on mobile, pinch-zoom
+// and the on-screen keyboard move the visual viewport, while position:fixed stays on the layout
+// viewport. Offsetting by visualViewport.offsetTop/Left and undoing the zoom pins it back on top.
+function pinHudToVisualViewport() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const hud = $('#hud');
+  const toasts = $('#toast-stack');
+  let queued = false;
+  const update = () => {
+    queued = false;
+    const moved = vv.scale !== 1 || vv.offsetTop !== 0 || vv.offsetLeft !== 0;
+    hud.style.transform = moved ? `translate(${vv.offsetLeft}px, ${vv.offsetTop}px) scale(${1 / vv.scale})` : '';
+    // Toasts are right-aligned: shift them so their right edge follows the visible area's right edge.
+    const rightGap = document.documentElement.clientWidth - (vv.offsetLeft + vv.width);
+    toasts.style.transform = moved ? `translate(${-rightGap}px, ${vv.offsetTop}px)` : '';
+  };
+  const schedule = () => { if (!queued) { queued = true; requestAnimationFrame(update); } };
+  vv.addEventListener('resize', schedule);
+  vv.addEventListener('scroll', schedule);
+  window.addEventListener('scroll', schedule, { passive: true });
+}
+
+pinHudToVisualViewport();
 fillTimeSelects();
 markMissionOption($('#app-form [name=district]'), mission.district);
 for (const el of $$('[data-mission]')) {
