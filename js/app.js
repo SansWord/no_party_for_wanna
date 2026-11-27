@@ -4,7 +4,7 @@ import {
 } from './validators.js';
 import {
   beginRun, submitResult, getLeaderboardPage, getHistogram, sampleNames, isReservedName, isOnlineConfigured,
-  DIVISIONS, SUPREME_MS, flagReasons,
+  DIVISIONS, SUPREME_MS, flagReasons, SEED_RECORDS,
 } from './scores.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -652,9 +652,15 @@ function makePanel(root, { onPage = () => {} } = {}) {
   function renderBoard(page) {
     current = page;
     ol.replaceChildren();
-    for (const r of page.rows) {
+    // Say Goodnight (#1) stays pinned on top of every page. It never changes, so it's drawn
+    // from SEED_RECORDS without a database read; page 1 already has it as its first row.
+    const onBoard = page.rows.some((r) => r.seed);
+    const pinned = !onBoard && page.rows.length ? [{ ...SEED_RECORDS[0], rank: 1, pinned: true }] : [];
+    for (const r of [...pinned, ...page.rows]) {
       const li = document.createElement('li');
-      if (highlight && r.id === highlight) li.className = 'me';
+      li.classList.toggle('me', !!(highlight && r.id === highlight));
+      li.classList.toggle('seed', !!r.seed);
+      li.classList.toggle('pinned', !!r.pinned);
       const no = document.createElement('span');
       no.className = 'rank';
       no.textContent = r.rank;
@@ -667,6 +673,13 @@ function makePanel(root, { onPage = () => {} } = {}) {
       t.textContent = formatDuration(r.timeMs + r.penaltyMs);
       li.append(no, name, errs, t);
       ol.appendChild(li);
+      if (r.pinned && page.rows[0].rank > 2) {
+        const gap = document.createElement('li');
+        gap.className = 'gap';
+        gap.setAttribute('aria-hidden', 'true');
+        gap.textContent = '⋯';
+        ol.appendChild(gap);
+      }
     }
     if (!page.rows.length) {
       const li = document.createElement('li');

@@ -227,7 +227,9 @@ legend { font-weight: 700; color: var(--brand-dark); padding-right: 8px; }
 .board { list-style: none; padding: 0; }
 .board li { display: grid; grid-template-columns: 2.2em 1fr auto 6.5em; align-items: baseline; gap: 8px; padding: 6px 8px; border-radius: 6px; }
 .board li .rank { color: var(--muted); font-variant-numeric: tabular-nums; }
-.board li:nth-child(1) .rank { color: var(--gold); font-weight: 700; }
+.board li.seed .rank { color: var(--gold); font-weight: 700; }
+.board li.seed { background: #fff8e1; }
+.board li.gap { padding: 0; line-height: 1; }
 .board li .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .board li small { color: var(--muted); font-size: 12px; }
 .board li b { text-align: right; }
