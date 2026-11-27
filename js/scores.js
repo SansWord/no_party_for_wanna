@@ -66,6 +66,16 @@ export const DIVISIONS = { human: '人類組', supreme: '至尊組' };
 export const FLAG_FAST = 1;
 export const FLAG_PAYLOAD = 2;
 export const FLAG_CLIENT = 4;
+export const FLAG_AI_NAME = 8;
+// Same list as AI_NAME_PARTS in leaderboard/src/logic.js.
+const AI_NAME_PARTS = [
+  'claude', '克勞低', '克勞德', '克勞迪', 'codex', 'gemini', 'gpt', 'grok', 'llm', 'copilot',
+  'deepseek', 'openai', 'anthropic', 'opus', 'sonnet',
+];
+export function isAiName(name) {
+  const n = String(name || '').toLowerCase();
+  return AI_NAME_PARTS.some((p) => n.includes(p)) || /(^|[^a-z])ai([^a-z]|$)/.test(n);
+}
 const total = (r) => r.timeMs + r.penaltyMs;
 
 export function isConsistentPayload(errors, penaltyMs) {
@@ -77,6 +87,7 @@ export function classify(r) {
   let flags = 0;
   if (total(r) < SUPREME_MS) flags |= FLAG_FAST;
   if (!isConsistentPayload(r.errors, r.penaltyMs)) flags |= FLAG_PAYLOAD;
+  if (isAiName(r.player)) flags |= FLAG_AI_NAME;
   return { flags, division: flags ? 'supreme' : 'human' };
 }
 
@@ -86,6 +97,7 @@ export function flagReasons(flags) {
   if (flags & FLAG_FAST) out.push('完成時間少於 20 秒');
   if (flags & FLAG_PAYLOAD) out.push('錯誤次數和罰秒對不上');
   if (flags & FLAG_CLIENT) out.push('請求不是從遊戲網頁送出');
+  if (flags & FLAG_AI_NAME) out.push('暱稱表明是 AI 參賽');
   return out;
 }
 

@@ -9,7 +9,7 @@
 //
 // Divisions are labels stored on each score (scores.division): a run is 人類組 (0) only if no
 // flag applies, otherwise 至尊組 (1). Flags: under 20 s, an errors/penalty combination the game
-// can't produce, or a start/finish request that didn't come from a browser page (see
+// can't produce, a start/finish request that didn't come from a browser page, or an AI nickname (see
 // classifyRun in logic.js). Without `division` the leaderboard is global (cached old clients).
 //
 // A page is { total, rows: [{ rank, ... }], prev, next } with keyset cursors, so every page
@@ -160,7 +160,7 @@ export default {
         }
 
         const browser = browserSignal(request.headers, !!origin) && startBrowser !== false;
-        const { flags, division } = classifyRun({ totalMs: r.totalMs, errors: r.errors, penaltyMs: r.penaltyMs, browser });
+        const { flags, division } = classifyRun({ totalMs: r.totalMs, errors: r.errors, penaltyMs: r.penaltyMs, browser, player: r.player });
 
         try {
           await env.DB.batch([

@@ -152,3 +152,15 @@ test('daily cap counts by Taiwan date and reads the env override', () => {
   assert.equal(dailyCap('5000'), 5000);
   for (const bad of ['0', '-1', 'x', '1.5']) assert.equal(dailyCap(bad), 150_000);
 });
+
+import { isAiName, FLAG_AI_NAME } from '../src/logic.js';
+
+test('AI nicknames go to 至尊組; look-alike human names do not', () => {
+  for (const n of ['Claude不唸克勞低，想想code怎唸', '克勞低參戰人類', '克勞德', 'Codex', 'Gemini 4 Neon', 'GrokBot', 'llmmaster', 'AI', 'AI小幫手', 'my ai'])
+    assert.ok(isAiName(n), n);
+  for (const n of ['Kai', 'Taipei soon', 'dddaisy', 'Ailsa', '我不是機器人', 'Say Goodnight', '凱道快手'])
+    assert.ok(!isAiName(n), n);
+  const ok = { totalMs: 45_000, errors: 0, penaltyMs: 0, browser: true };
+  assert.deepEqual(classifyRun({ ...ok, player: '克勞低參戰人類' }), { flags: FLAG_AI_NAME, division: DIV_SUPREME });
+  assert.deepEqual(classifyRun({ ...ok, player: '凱道快手' }), { flags: 0, division: DIV_HUMAN });
+});

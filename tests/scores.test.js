@@ -24,6 +24,8 @@ test('classification: under 20 s or inconsistent payload → 至尊組', () => {
   assert.deepEqual(classify({ timeMs: 40_000, penaltyMs: 5000, errors: 0 }), { flags: 2, division: 'supreme' });
   assert.deepEqual(classify({ timeMs: 40_000, penaltyMs: 15000, errors: 2 }), { flags: 0, division: 'human' });
   assert.deepEqual(flagReasons(1 | 4), ['完成時間少於 20 秒', '請求不是從遊戲網頁送出']);
+  assert.deepEqual(classify({ player: '克勞低參戰人類', timeMs: 40_000, penaltyMs: 0, errors: 0 }), { flags: 8, division: 'supreme' });
+  assert.deepEqual(flagReasons(8), ['暱稱表明是 AI 參賽']);
 });
 
 test('offline: Say Goodnight (0.35s) leads both 至尊組 and 人類組', async () => {

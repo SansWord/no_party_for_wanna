@@ -190,6 +190,18 @@ export const DIV_SUPREME = 1;
 export const FLAG_FAST = 1;     // total under SUPREME_MS
 export const FLAG_PAYLOAD = 2;  // errors / penalty combination the game can't produce
 export const FLAG_CLIENT = 4;   // start or finish request didn't come from a browser page
+export const FLAG_AI_NAME = 8;  // nickname says it's an AI (Claude/克勞低, Codex, Gemini, GPT…)
+
+// Lowercased substrings that mark an AI nickname, plus "AI" as a standalone word (so Kai,
+// Taipei, Daisy don't match). 機器人/bot are left out: mostly humans joking at normal speed.
+export const AI_NAME_PARTS = [
+  'claude', '克勞低', '克勞德', '克勞迪', 'codex', 'gemini', 'gpt', 'grok', 'llm', 'copilot',
+  'deepseek', 'openai', 'anthropic', 'opus', 'sonnet',
+];
+export function isAiName(name) {
+  const n = String(name || '').toLowerCase();
+  return AI_NAME_PARTS.some((p) => n.includes(p)) || /(^|[^a-z])ai([^a-z]|$)/.test(n);
+}
 
 /**
  * The game adds 2–10 s of penalty per mistake (and never a penalty without a mistake), so
@@ -213,8 +225,9 @@ export function browserSignal(headers, originAllowed) {
 }
 
 /** `browser`: true / false / null (unknown, e.g. records from before the signal existed). */
-export function classifyRun({ totalMs, errors, penaltyMs, browser }) {
+export function classifyRun({ totalMs, errors, penaltyMs, browser, player }) {
   let flags = 0;
+  if (isAiName(player)) flags |= FLAG_AI_NAME;
   if (totalMs < SUPREME_MS) flags |= FLAG_FAST;
   if (!isConsistentPayload(errors, penaltyMs)) flags |= FLAG_PAYLOAD;
   if (browser === false) flags |= FLAG_CLIENT;
