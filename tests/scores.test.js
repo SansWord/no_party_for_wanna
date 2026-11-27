@@ -106,3 +106,11 @@ test('offline: jump straight to page n (clamped to the last page)', async () => 
   assert.deepEqual(span(await getLeaderboardPage({ division: 'human', page: 2 })), [11, 20]);
   assert.deepEqual(span(await getLeaderboardPage({ division: 'human', page: 99 })), [21, 25]);
 });
+
+test('offline: page=random lands on a valid aligned page', async () => {
+  for (let i = 0; i < 24; i++) await submitResult(rec(i, 20_000 + i * 1000), null); // + seed = 25
+  for (let i = 0; i < 20; i++) {
+    const [from, to] = span(await getLeaderboardPage({ division: 'human', page: 'random' }));
+    assert.ok([[1, 10], [11, 20], [21, 25]].some(([a, b]) => a === from && b === to), `${from}-${to}`);
+  }
+});

@@ -3,7 +3,7 @@
 //   POST /api/runs                → { runId }   (player pressed 開始計時; runId is a signed token)
 //   POST /api/runs/:token/finish  → { record, rank, division, flags, total, page }
 //   GET  /api/leaderboard         → page: first page, or ?after=<cursor> / ?before=<cursor> /
-//                                   ?around=<id> / ?last=1 / ?page=<n> (needs division);
+//                                   ?around=<id> / ?last=1 / ?page=<n>|random (needs division);
 //                                   optional &division=human|supreme
 //   GET  /api/histogram           → { bins: [{ fromMs, toMs, n, human, supreme }], total, record }
 //   GET  /api/histogram/sample    → ?from=<ms>&to=<ms> → { names } (≈5 random nicknames)
@@ -92,12 +92,15 @@ export default {
         }
         if (q.has('around')) return json(await pageAround(env, q.get('around'), limit, division));
         if (q.has('page')) {
-          // Jump to page n (ranks (n-1)·limit+1 …) of a division board, e.g. the 隨機一頁 button.
-          const n = Number(q.get('page'));
-          if (division == null || !Number.isInteger(n) || n < 1) return json({ error: 'bad_page' }, 400);
+          // Page n (ranks (n-1)·limit+1 …) of a division board, or page=random (the lobby's
+          // opening page and the 🎲 隨機 button).
+          const raw = q.get('page');
+          const n = Number(raw);
+          if (division == null || (raw !== 'random' && (!Number.isInteger(n) || n < 1))) return json({ error: 'bad_page' }, 400);
           const div = await divisionInfo(env, division);
           const pages = Math.max(1, Math.ceil(div.total / limit));
-          return json(await pageAtRank(env, (Math.min(n, pages) - 1) * limit + 1, limit, div));
+          const page = raw === 'random' ? 1 + Math.floor(Math.random() * pages) : Math.min(n, pages);
+          return json(await pageAtRank(env, (page - 1) * limit + 1, limit, div));
         }
         if (q.has('last')) return json(await lastPage(env, limit, await divisionInfo(env, division)));
         const key = `${division}:${limit}`;

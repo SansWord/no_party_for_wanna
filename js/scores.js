@@ -247,7 +247,7 @@ export async function submitResult(record, run) {
 /**
  * One page of a division's leaderboard (`division`: 'human' | 'supreme'). Pass nothing else for
  * the first page, `{ after }` / `{ before }` with a cursor from a previous page, `{ around: id }`
- * for the page containing a record, `{ last: true }`, or `{ page: n }`. Pages are aligned to ranks 10n+1.
+ * for the page containing a record, `{ last: true }`, or `{ page: n | 'random' }`. Pages are aligned to ranks 10n+1.
  * @returns {Promise<Page>}
  */
 export async function getLeaderboardPage({ division = 'human', after, before, around, last, page } = {}) {
@@ -271,7 +271,8 @@ export async function getLeaderboardPage({ division = 'human', after, before, ar
   if (around) return localPageAround(around, division);
   if (page) {
     const pages = Math.max(1, Math.ceil(localRanked(division).length / TOP_N));
-    return localPage((Math.min(page, pages) - 1) * TOP_N, division);
+    const n = page === 'random' ? 1 + Math.floor(Math.random() * pages) : Math.min(page, pages);
+    return localPage((n - 1) * TOP_N, division);
   }
   if (last) {
     const n = localRanked(division).length;

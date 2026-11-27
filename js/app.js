@@ -777,7 +777,7 @@ function makePanel(root, { onPage = () => {} } = {}) {
     t.addEventListener('click', () => {
       if (t.dataset.div === division) return;
       setTab(t.dataset.div);
-      go(highlight && myDivision === division ? { around: highlight } : {});
+      go(highlight && myDivision === division ? { around: highlight } : { page: 'random' });
     });
   }
   prevBtn.addEventListener('click', () => current?.prev && go({ before: current.prev }));
@@ -795,12 +795,12 @@ function makePanel(root, { onPage = () => {} } = {}) {
   });
 
   return {
-    /** Lobby: histogram + first page of the selected division. */
+    /** Lobby: histogram + a random page of the selected division (the 👑 card shows #1). */
     load() {
       mine = null;
       myDivision = null;
       highlight = null;
-      return Promise.all([loadHistogram(), go({})]);
+      return Promise.all([loadHistogram(), go({ page: 'random' })]);
     },
     /** Result screen: open the player's division on their page, mark them in the histogram. */
     showResult(res, officialMs, note) {
