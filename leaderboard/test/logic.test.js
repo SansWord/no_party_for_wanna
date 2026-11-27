@@ -164,3 +164,14 @@ test('AI nicknames go to 至尊組; look-alike human names do not', () => {
   assert.deepEqual(classifyRun({ ...ok, player: '克勞低參戰人類' }), { flags: FLAG_AI_NAME, division: DIV_SUPREME });
   assert.deepEqual(classifyRun({ ...ok, player: '凱道快手' }), { flags: 0, division: DIV_HUMAN });
 });
+
+import { isListedScriptName, FLAG_LISTED_NAME } from '../src/logic.js';
+
+test('listed script nicknames go to 至尊組 by exact name', () => {
+  assert.ok(isListedScriptName('我是人類123'));
+  assert.ok(isListedScriptName(' 我是人類ABC '));
+  assert.ok(!isListedScriptName('我是人類'));
+  assert.ok(!isListedScriptName('我是人類333'));
+  const ok = { totalMs: 45_000, errors: 0, penaltyMs: 0, browser: true };
+  assert.deepEqual(classifyRun({ ...ok, player: '我是人類456' }), { flags: FLAG_LISTED_NAME, division: DIV_SUPREME });
+});

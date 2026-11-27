@@ -98,6 +98,7 @@ export function flagReasons(flags) {
   if (flags & FLAG_PAYLOAD) out.push('錯誤次數和罰秒對不上');
   if (flags & FLAG_CLIENT) out.push('請求不是從遊戲網頁送出');
   if (flags & FLAG_AI_NAME) out.push('暱稱表明是 AI 參賽');
+  if (flags & 16) out.push('這個暱稱曾以腳本登錄成績');
   return out;
 }
 

@@ -198,6 +198,12 @@ export const AI_NAME_PARTS = [
   'claude', '克勞低', '克勞德', '克勞迪', 'codex', 'gemini', 'gpt', 'grok', 'llm', 'copilot',
   'deepseek', 'openai', 'anthropic', 'opus', 'sonnet',
 ];
+// Nicknames seen submitting scripted runs (exactly 20.0 s) into 人類組; matched exactly.
+export const FLAG_LISTED_NAME = 16;
+export const SCRIPT_NAMES = ['我是人類123', '我是人類456', '我是人類789', '我是人類abc'];
+export function isListedScriptName(name) {
+  return SCRIPT_NAMES.includes(String(name || '').trim().toLowerCase());
+}
 export function isAiName(name) {
   const n = String(name || '').toLowerCase();
   return AI_NAME_PARTS.some((p) => n.includes(p)) || /(^|[^a-z])ai([^a-z]|$)/.test(n);
@@ -228,6 +234,7 @@ export function browserSignal(headers, originAllowed) {
 export function classifyRun({ totalMs, errors, penaltyMs, browser, player }) {
   let flags = 0;
   if (isAiName(player)) flags |= FLAG_AI_NAME;
+  if (isListedScriptName(player)) flags |= FLAG_LISTED_NAME;
   if (totalMs < SUPREME_MS) flags |= FLAG_FAST;
   if (!isConsistentPayload(errors, penaltyMs)) flags |= FLAG_PAYLOAD;
   if (browser === false) flags |= FLAG_CLIENT;
