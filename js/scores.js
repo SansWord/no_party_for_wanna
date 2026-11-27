@@ -247,10 +247,10 @@ export async function submitResult(record, run) {
 /**
  * One page of a division's leaderboard (`division`: 'human' | 'supreme'). Pass nothing else for
  * the first page, `{ after }` / `{ before }` with a cursor from a previous page, `{ around: id }`
- * for the page containing a record, or `{ last: true }`. Pages are aligned to ranks 10n+1.
+ * for the page containing a record, `{ last: true }`, or `{ page: n }`. Pages are aligned to ranks 10n+1.
  * @returns {Promise<Page>}
  */
-export async function getLeaderboardPage({ division = 'human', after, before, around, last } = {}) {
+export async function getLeaderboardPage({ division = 'human', after, before, around, last, page } = {}) {
   const local = (after && after.startsWith('L')) || (before && before.startsWith('L'));
   if (apiBase() && !local) {
     try {
@@ -259,6 +259,7 @@ export async function getLeaderboardPage({ division = 'human', after, before, ar
       else if (before) q.set('before', before);
       else if (around) q.set('around', around);
       else if (last) q.set('last', '1');
+      else if (page) q.set('page', String(page));
       return { online: true, division, ...(await api(`/api/leaderboard?${q}`)) };
     } catch (err) {
       console.warn('[leaderboard] fetch failed, showing local', err);
@@ -268,6 +269,10 @@ export async function getLeaderboardPage({ division = 'human', after, before, ar
   if (after) return localPage(rankOf(after), division);
   if (before) return localPage(Math.max(0, rankOf(before) - 1 - TOP_N), division);
   if (around) return localPageAround(around, division);
+  if (page) {
+    const pages = Math.max(1, Math.ceil(localRanked(division).length / TOP_N));
+    return localPage((Math.min(page, pages) - 1) * TOP_N, division);
+  }
   if (last) {
     const n = localRanked(division).length;
     return localPage(Math.floor(Math.max(0, n - 1) / TOP_N) * TOP_N, division);

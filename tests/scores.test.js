@@ -100,3 +100,9 @@ test('offline: a division board lists each nickname once, at its best', async ()
   const h = await getHistogram();
   assert.equal(h.total, 4); // the histogram still counts every run (+ seed)
 });
+
+test('offline: jump straight to page n (clamped to the last page)', async () => {
+  for (let i = 0; i < 24; i++) await submitResult(rec(i, 20_000 + i * 1000), null); // + seed = 25
+  assert.deepEqual(span(await getLeaderboardPage({ division: 'human', page: 2 })), [11, 20]);
+  assert.deepEqual(span(await getLeaderboardPage({ division: 'human', page: 99 })), [21, 25]);
+});

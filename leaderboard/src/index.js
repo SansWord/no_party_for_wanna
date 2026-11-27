@@ -3,7 +3,8 @@
 //   POST /api/runs                → { runId }   (player pressed 開始計時; runId is a signed token)
 //   POST /api/runs/:token/finish  → { record, rank, division, flags, total, page }
 //   GET  /api/leaderboard         → page: first page, or ?after=<cursor> / ?before=<cursor> /
-//                                   ?around=<id> / ?last=1; optional &division=human|supreme
+//                                   ?around=<id> / ?last=1 / ?page=<n> (needs division);
+//                                   optional &division=human|supreme
 //   GET  /api/histogram           → { bins: [{ fromMs, toMs, n, human, supreme }], total, record }
 //   GET  /api/histogram/sample    → ?from=<ms>&to=<ms> → { names } (≈5 random nicknames)
 //
@@ -90,6 +91,14 @@ export default {
           return json(await pageFrom(env, cursor, q.has('after') ? 'after' : 'before', limit, div));
         }
         if (q.has('around')) return json(await pageAround(env, q.get('around'), limit, division));
+        if (q.has('page')) {
+          // Jump to page n (ranks (n-1)·limit+1 …) of a division board, e.g. the 隨機一頁 button.
+          const n = Number(q.get('page'));
+          if (division == null || !Number.isInteger(n) || n < 1) return json({ error: 'bad_page' }, 400);
+          const div = await divisionInfo(env, division);
+          const pages = Math.max(1, Math.ceil(div.total / limit));
+          return json(await pageAtRank(env, (Math.min(n, pages) - 1) * limit + 1, limit, div));
+        }
         if (q.has('last')) return json(await lastPage(env, limit, await divisionInfo(env, division)));
         const key = `${division}:${limit}`;
         const hit = boardCache.get(key);
@@ -349,6 +358,37 @@ async function pageFrom(env, cursor, dir, limit, div) {
   if (dir === 'after') return toPage(await rowsAfter(env, key, limit, div), cursor.rank + 1, div.total);
   const rows = await rowsBefore(env, key, Math.min(limit, cursor.rank - 1), div);
   return toPage(rows, cursor.rank - rows.length, div.total);
+}
+
+/**
+ * Page starting at `rank`, found from the rank counters instead of an OFFSET over the board:
+ * Σ 5 s buckets → the 5 s bucket holding that rank, Σ its 100 ms buckets → the 100 ms bucket,
+ * then a short OFFSET inside it. Reads ≤ ~800 small rows at any board size.
+ */
+async function pageAtRank(env, rank, limit, div) {
+  const { board, division } = div;
+  const { results: coarse } = await env.DB.prepare(
+    `SELECT bucket, n FROM ${board.coarse} WHERE division = ? AND n > 0 ORDER BY bucket`,
+  ).bind(division).all();
+  let before = 0;
+  let c = null;
+  for (const b of coarse) {
+    if (before + b.n >= rank) { c = b.bucket; break; }
+    before += b.n;
+  }
+  if (c == null) return lastPage(env, limit, div);
+  const { results: fine } = await env.DB.prepare(
+    `SELECT bucket, n FROM ${board.fine} WHERE division = ? AND bucket >= ? AND bucket < ? AND n > 0 ORDER BY bucket`,
+  ).bind(division, c * FINE_PER_COARSE, (c + 1) * FINE_PER_COARSE).all();
+  let f = c * FINE_PER_COARSE;
+  for (const b of fine) {
+    if (before + b.n >= rank) { f = b.bucket; break; }
+    before += b.n;
+  }
+  const { results } = await env.DB.prepare(
+    `SELECT ${COLS} FROM ${board.table} WHERE ${div.where} AND total_ms >= ? ORDER BY total_ms, created_at LIMIT ? OFFSET ?`,
+  ).bind(...div.binds, f * BUCKET_MS, limit, rank - 1 - before).all();
+  return toPage(results, rank, div.total);
 }
 
 /** Page containing a row, aligned to fixed pages: rank 33 with limit 10 → ranks 31–40. */

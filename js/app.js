@@ -630,7 +630,8 @@ function showAttemptCount(hist) {
 function makePanel(root, { onPage = () => {} } = {}) {
   const ol = $('[data-board]', root);
   const pager = $('[data-pager]', root);
-  const [firstBtn, prevBtn, nextBtn, lastBtn] = ['first', 'prev', 'next', 'last'].map((d) => $(`[data-dir=${d}]`, pager));
+  const [firstBtn, prevBtn, randomBtn, nextBtn, lastBtn] = ['first', 'prev', 'random', 'next', 'last'].map((d) => $(`[data-dir=${d}]`, pager));
+  const pageCount = (page) => Math.ceil((page?.total || 0) / BOARD_SIZE);
   const info = $('.pager-info', pager);
   const tabs = $$('[data-div]', root);
   const histoEl = $('[data-histo]', root);
@@ -678,13 +679,14 @@ function makePanel(root, { onPage = () => {} } = {}) {
     info.textContent = first ? `第 ${first.rank}–${last.rank} 名（共 ${page.total.toLocaleString('zh-TW')} 位玩家）` : '';
     firstBtn.disabled = prevBtn.disabled = !page.prev;
     nextBtn.disabled = lastBtn.disabled = !page.next;
+    randomBtn.disabled = pageCount(page) < 2;
     pager.hidden = !page.prev && !page.next;
     $('[data-board-title]', root).textContent = `${page.online ? '線上' : '本機'}排行榜`;
     onPage(page);
   }
 
   async function go(params) {
-    firstBtn.disabled = prevBtn.disabled = nextBtn.disabled = lastBtn.disabled = true;
+    firstBtn.disabled = prevBtn.disabled = randomBtn.disabled = nextBtn.disabled = lastBtn.disabled = true;
     ol.classList.add('loading');
     try {
       renderBoard(await getLeaderboardPage({ division, ...params }));
@@ -782,6 +784,15 @@ function makePanel(root, { onPage = () => {} } = {}) {
   nextBtn.addEventListener('click', () => current?.next && go({ after: current.next }));
   firstBtn.addEventListener('click', () => current?.prev && go({}));
   lastBtn.addEventListener('click', () => current?.next && go({ last: true }));
+  // Any other page, before or after this one.
+  randomBtn.addEventListener('click', () => {
+    const pages = pageCount(current);
+    if (pages < 2) return;
+    const here = Math.ceil((current.rows[0]?.rank || 1) / BOARD_SIZE);
+    let n = 1 + Math.floor(Math.random() * (pages - 1));
+    if (n >= here) n += 1;
+    go({ page: n });
+  });
 
   return {
     /** Lobby: histogram + first page of the selected division. */
