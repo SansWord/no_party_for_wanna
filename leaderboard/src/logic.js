@@ -22,6 +22,15 @@ export function dailyCap(value) {
   return Number.isInteger(n) && n > 0 ? n : DAILY_SCORE_CAP;
 }
 
+/**
+ * Key that merges a nickname's runs on the best-per-name boards: ASCII case-insensitive (same
+ * as SQLite lower(), so the SQL backfill and the Worker agree). Spaces are already collapsed
+ * by sanitizePlayer.
+ */
+export function nameKey(player) {
+  return String(player).replace(/[A-Z]/g, (c) => c.toLowerCase());
+}
+
 /** Normalize a nickname: strip control chars, collapse spaces, cap length (by code point). */
 export function sanitizePlayer(name) {
   const cleaned = String(name ?? '')

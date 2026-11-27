@@ -89,3 +89,14 @@ test('Say Goodnight is a reserved nickname', () => {
   assert.ok(isReservedName(' say   GOODNIGHT '));
   assert.ok(!isReservedName('Say Goodnights'));
 });
+
+test('offline: a division board lists each nickname once, at its best', async () => {
+  await submitResult({ id: 'w1', player: 'weich', timeMs: 30_000, penaltyMs: 0, errors: 0 }, null);
+  const better = await submitResult({ id: 'w2', player: 'Weich', timeMs: 25_000, penaltyMs: 0, errors: 0 }, null);
+  assert.deepEqual([better.improved, better.rank, better.total], [true, 2, 2]);
+  const slower = await submitResult({ id: 'w3', player: 'weich', timeMs: 40_000, penaltyMs: 0, errors: 0 }, null);
+  assert.deepEqual([slower.improved, slower.best.id, slower.rank, slower.total], [false, 'w2', 2, 2]);
+  assert.deepEqual(slower.page.rows.map((r) => r.id), ['seed-wanna-talk', 'w2']);
+  const h = await getHistogram();
+  assert.equal(h.total, 4); // the histogram still counts every run (+ seed)
+});

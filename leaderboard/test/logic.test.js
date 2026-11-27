@@ -175,3 +175,11 @@ test('listed script nicknames go to 至尊組 by exact name', () => {
   const ok = { totalMs: 45_000, errors: 0, penaltyMs: 0, browser: true };
   assert.deepEqual(classifyRun({ ...ok, player: '我是人類456' }), { flags: FLAG_LISTED_NAME, division: DIV_SUPREME });
 });
+
+import { nameKey } from '../src/logic.js';
+
+test('nameKey merges ASCII case like SQLite lower(), leaves other scripts alone', () => {
+  assert.equal(nameKey('Weich'), 'weich');
+  assert.equal(nameKey('我是人類ABC'), '我是人類abc');
+  assert.equal(nameKey('Ｃlaude'), 'Ｃlaude'); // full-width: SQLite lower() doesn't fold it either
+});

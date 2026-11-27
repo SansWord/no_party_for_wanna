@@ -47,6 +47,8 @@ Each score is labelled when it's saved (`scores.division`, `scores.flags`). A ru
 | 8 | nickname says it's an AI (`isAiName` in `leaderboard/src/logic.js`: Claude/克勞低/克勞德, Codex, Gemini, GPT, Grok, LLM…, or "AI" as a standalone word). 機器人/bot don't count | all records (`migrations/0003_ai_names.sql`, generated from `isAiName`, moved existing rows on 2026-11-27) |
 | 16 | nickname on the `SCRIPT_NAMES` list (exact match): names seen submitting scripted exactly-20 s runs, e.g. 我是人類123 | all records (`migrations/0004_script_names.sql`, 2026-11-27) |
 
+**Best per nickname.** The 人類組/至尊組 boards list each nickname once, at its best run: `best_scores` (one row per division + `name_key`, ASCII case-insensitive) with its own rank counters (`best_buckets`, `best_buckets_coarse`, `stats.best0/best1`), all updated in the finish batch. A slower repeat changes nothing; the result screen shows this run and the nickname's best. The histogram and the lobby line 「總共有 x 人嘗試借用凱道」 count every run. Build or rebuild from `scores`: `migrations/0005_best_scores.sql` (idempotent; run before and after deploying).
+
 Say Goodnight is seeded in both divisions (`seed-wanna-talk` 至尊組, `seed-wanna-talk-human` 人類組); the histogram and the division-less board count it once. Ranks use per-division counters (`score_buckets_div`, `score_buckets_coarse_div`, `stats.div0/div1`). Migration for an existing DB: `migrations/0002_divisions.sql`, deploy, then `migrations/0002b_resync.sql`.
 
 ## Seed record

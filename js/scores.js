@@ -32,7 +32,9 @@ export function isReservedName(name) {
  * @typedef {ScoreRecord & { rank: number }} RankedRow
  * @typedef {{ online: boolean, rows: RankedRow[], total: number, prev: string|null, next: string|null }} Page
  *   prev/next are opaque cursors for getLeaderboardPage({ before }) / ({ after }).
- * @typedef {{ online: boolean, record: ScoreRecord, division: 'human'|'supreme', rank: number, total: number, page: Page, error?: string }} SubmitResult
+ * @typedef {{ online: boolean, record: ScoreRecord, best: ScoreRecord, improved: boolean, division: 'human'|'supreme',
+ *             rank: number, total: number, page: Page, error?: string }} SubmitResult
+ *   rank/total/page are about the nickname's best run (division boards list each nickname once).
  */
 
 function apiBase() {
@@ -116,11 +118,18 @@ function readAll() {
   }
 }
 
+/** Same merge rule as nameKey() in the Worker: ASCII case-insensitive. */
+const nameKey = (player) => String(player).replace(/[A-Z]/g, (c) => c.toLowerCase());
+
+/** Every run (division null), or a division board with each nickname once at its best. */
 function localRanked(division = null) {
-  return [...SEED_RECORDS, ...readAll()]
+  const runs = [...SEED_RECORDS, ...readAll()]
     .filter((r) => r.success !== false)
     .filter((r) => inDivision(r, division))
     .sort((a, b) => total(a) - total(b));
+  if (!division) return runs;
+  const seen = new Set();
+  return runs.filter((r) => !seen.has(nameKey(r.player)) && seen.add(nameKey(r.player)));
 }
 
 /** Slice of the local ranking starting at 0-based index `start`; cursors are "L<division>:<rank>". */
@@ -152,8 +161,12 @@ function localSubmit(record) {
   localStorage.setItem(KEY, JSON.stringify(all.slice(-200)));
   const { division, flags } = classify(record);
   const ranked = localRanked(division);
-  const page = localPageAround(record.id, division);
-  return { online: false, record, division, flags, rank: ranked.findIndex((r) => r.id === record.id) + 1, total: ranked.length, page };
+  const best = ranked.find((r) => nameKey(r.player) === nameKey(record.player)) || record;
+  const page = localPageAround(best.id, division);
+  return {
+    online: false, record, best, improved: best.id === record.id,
+    division, flags, rank: ranked.indexOf(best) + 1, total: ranked.length, page,
+  };
 }
 
 function localHistogram() {
@@ -215,6 +228,8 @@ export async function submitResult(record, run) {
       return {
         online: true,
         record: { ...res.record, caseNo: record.caseNo },
+        best: res.best || res.record,
+        improved: res.improved ?? true,
         division,
         flags: res.flags ?? 0,
         rank: res.rank,

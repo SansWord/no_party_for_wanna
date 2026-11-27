@@ -12,6 +12,11 @@
 // can't produce, a start/finish request that didn't come from a browser page, or an AI nickname (see
 // classifyRun in logic.js). Without `division` the leaderboard is global (cached old clients).
 //
+// Division boards (人類組/至尊組) list each nickname once, at its best time: best_scores holds
+// one row per (division, nameKey) with its own rank buckets and stats rows best0/best1, all
+// updated in the finish batch. The division-less board (cached old clients) and the histogram
+// count every run from scores.
+//
 // A page is { total, rows: [{ rank, ... }], prev, next } with keyset cursors, so every page
 // reads only `limit` rows from an index (no OFFSET, which D1 would bill row by row). Ranks in a
 // division page are ranks within that division.
@@ -32,7 +37,7 @@
 import {
   validateFinish, corsOrigin, clampLimit, bucketOf, coarseOf, BUCKET_MS, COARSE_MS, FINE_PER_COARSE,
   encodeCursor, decodeCursor, signRunToken, verifyRunToken, parseBody, LEGACY_RUN_RE, parseRange,
-  browserSignal, classifyRun, DIV_HUMAN, DIV_SUPREME, DIVISION_NAME, divisionIndex, dayKey, dailyCap,
+  browserSignal, classifyRun, DIV_HUMAN, DIV_SUPREME, DIVISION_NAME, divisionIndex, dayKey, dailyCap, nameKey,
 } from './logic.js';
 
 const TOP_N = 10;
@@ -42,6 +47,9 @@ const SEED_HUMAN_ID = 'seed-wanna-talk-human';
 const BOARD_CACHE_MS = 10_000;
 const HISTOGRAM_CACHE_MS = 30_000;
 const SAMPLE_SIZE = 5;
+// Which tables a board reads: every run, or each nickname's best run.
+const ALL = { table: 'scores', fine: 'score_buckets_div', coarse: 'score_buckets_coarse_div', stat: 'div' };
+const BEST = { table: 'best_scores', fine: 'best_buckets', coarse: 'best_buckets_coarse', stat: 'best' };
 const boardCache = new Map(); // per-isolate cache of first pages: key `${division}:${limit}` → { at, body }
 let histogramCache = null;     // { at, body }
 let capReachedDay = null;      // dayKey once this isolate has seen the daily cap hit (skips D1)
@@ -172,6 +180,7 @@ export default {
               .bind(division, bucketOf(r.totalMs)),
             env.DB.prepare('INSERT INTO score_buckets_coarse_div (division, bucket, n) VALUES (?, ?, 1) ON CONFLICT(division, bucket) DO UPDATE SET n = n + 1')
               .bind(division, coarseOf(r.totalMs)),
+            ...bestStatements(env, { id: runId, division, key: nameKey(r.player), createdAt: now, ...r }),
           ]);
         } catch (err) {
           // scores.id is the PRIMARY KEY: a second finish with the same token is rejected (batch rolls back).
@@ -182,11 +191,16 @@ export default {
         }
 
         boardCache.clear();
+        // The board shows the nickname's best run: rank and page are about that row.
+        const best = await env.DB.prepare(`SELECT ${COLS} FROM best_scores WHERE division = ? AND name_key = ?`)
+          .bind(division, nameKey(r.player)).first();
         const div = await divisionInfo(env, division);
-        const rank = (await countFaster(env, division, r.totalMs, now)) + 1;
-        const page = await pageAroundRow(env, { total_ms: r.totalMs, created_at: now }, rank, TOP_N, div);
+        const rank = (await countFaster(env, BEST, division, best.total_ms, best.created_at)) + 1;
+        const page = await pageAroundRow(env, best, rank, TOP_N, div);
         return json({
           record: { id: runId, ...r },
+          best: { id: best.id, player: best.player, timeMs: best.time_ms, penaltyMs: best.penalty_ms, errors: best.errors },
+          improved: best.id === runId,
           rank,
           division: DIVISION_NAME[division],
           flags,
@@ -206,10 +220,11 @@ export default {
 
 const COLS = 'id, player, time_ms, penalty_ms, errors, total_ms, created_at, seed, division';
 
-async function divisionTotals(env) {
-  const { results } = await env.DB.prepare("SELECT key, value FROM stats WHERE key IN ('div0', 'div1')").all();
+async function divisionTotals(env, board = ALL) {
+  const { results } = await env.DB.prepare('SELECT key, value FROM stats WHERE key IN (?, ?)')
+    .bind(`${board.stat}0`, `${board.stat}1`).all();
   const t = [0, 0];
-  for (const row of results) t[row.key === 'div1' ? 1 : 0] = row.value;
+  for (const row of results) t[row.key.endsWith('1') ? 1 : 0] = row.value;
   return t;
 }
 
@@ -218,9 +233,42 @@ async function divisionTotals(env) {
  * the global (total_ms, created_at) index for cached clients that don't send a division.
  */
 async function divisionInfo(env, division) {
-  const [d0, d1] = await divisionTotals(env);
-  if (division == null) return { where: 'id <> ?', binds: [SEED_HUMAN_ID], division: null, total: d0 + d1 - 1 };
-  return { where: 'division = ?', binds: [division], division, total: division === DIV_HUMAN ? d0 : d1 };
+  if (division == null) {
+    const [d0, d1] = await divisionTotals(env, ALL);
+    return { board: ALL, where: 'id <> ?', binds: [SEED_HUMAN_ID], division: null, total: d0 + d1 - 1 };
+  }
+  const [b0, b1] = await divisionTotals(env, BEST);
+  return { board: BEST, where: 'division = ?', binds: [division], division, total: division === DIV_HUMAN ? b0 : b1 };
+}
+
+/**
+ * Statements (appended to the finish batch, in order) that keep best_scores and its counters in
+ * step: if this run beats the nickname's best (or is its first), move the best row and its
+ * buckets; otherwise they change nothing. Ties keep the earlier run.
+ */
+function bestStatements(env, run) {
+  const { division: d, key } = run;
+  const beaten = 'FROM best_scores WHERE division = ? AND name_key = ? AND total_ms > ?';
+  const isBest = 'EXISTS (SELECT 1 FROM best_scores WHERE division = ? AND name_key = ? AND id = ?)';
+  return [
+    env.DB.prepare(`UPDATE best_buckets SET n = n - 1 WHERE division = ? AND bucket = (SELECT total_ms / ${BUCKET_MS} ${beaten})`)
+      .bind(d, d, key, run.totalMs),
+    env.DB.prepare(`UPDATE best_buckets_coarse SET n = n - 1 WHERE division = ? AND bucket = (SELECT total_ms / ${COARSE_MS} ${beaten})`)
+      .bind(d, d, key, run.totalMs),
+    env.DB.prepare('UPDATE stats SET value = value + 1 WHERE key = ? AND NOT EXISTS (SELECT 1 FROM best_scores WHERE division = ? AND name_key = ?)')
+      .bind(`best${d}`, d, key),
+    env.DB.prepare(
+      `INSERT INTO best_scores (division, name_key, id, player, time_ms, penalty_ms, errors, total_ms, created_at, seed)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+       ON CONFLICT(division, name_key) DO UPDATE SET id = excluded.id, player = excluded.player, time_ms = excluded.time_ms,
+         penalty_ms = excluded.penalty_ms, errors = excluded.errors, total_ms = excluded.total_ms, created_at = excluded.created_at
+       WHERE excluded.total_ms < best_scores.total_ms`,
+    ).bind(d, key, run.id, run.player, run.timeMs, run.penaltyMs, run.errors, run.totalMs, run.createdAt),
+    env.DB.prepare(`INSERT INTO best_buckets (division, bucket, n) SELECT ?, ?, 1 WHERE ${isBest} ON CONFLICT(division, bucket) DO UPDATE SET n = n + 1`)
+      .bind(d, bucketOf(run.totalMs), d, key, run.id),
+    env.DB.prepare(`INSERT INTO best_buckets_coarse (division, bucket, n) SELECT ?, ?, 1 WHERE ${isBest} ON CONFLICT(division, bucket) DO UPDATE SET n = n + 1`)
+      .bind(d, coarseOf(run.totalMs), d, key, run.id),
+  ];
 }
 
 /**
@@ -228,15 +276,15 @@ async function divisionInfo(env, division) {
  * Σ 5 s buckets below + Σ 100 ms buckets below within our 5 s bucket + an index range inside our
  * own 100 ms bucket. One round trip via batch.
  */
-async function countFaster(env, division, totalMs, createdAt) {
+async function countFaster(env, board, division, totalMs, createdAt) {
   const fine = bucketOf(totalMs);
   const coarse = coarseOf(totalMs);
   const [a, b, c] = await env.DB.batch([
-    env.DB.prepare('SELECT COALESCE(SUM(n), 0) AS s FROM score_buckets_coarse_div WHERE division = ? AND bucket < ?')
+    env.DB.prepare(`SELECT COALESCE(SUM(n), 0) AS s FROM ${board.coarse} WHERE division = ? AND bucket < ?`)
       .bind(division, coarse),
-    env.DB.prepare('SELECT COALESCE(SUM(n), 0) AS s FROM score_buckets_div WHERE division = ? AND bucket >= ? AND bucket < ?')
+    env.DB.prepare(`SELECT COALESCE(SUM(n), 0) AS s FROM ${board.fine} WHERE division = ? AND bucket >= ? AND bucket < ?`)
       .bind(division, coarse * FINE_PER_COARSE, fine),
-    env.DB.prepare('SELECT COUNT(*) AS s FROM scores WHERE division = ? AND total_ms >= ? AND (total_ms, created_at) < (?, ?)')
+    env.DB.prepare(`SELECT COUNT(*) AS s FROM ${board.table} WHERE division = ? AND total_ms >= ? AND (total_ms, created_at) < (?, ?)`)
       .bind(division, fine * BUCKET_MS, totalMs, createdAt),
   ]);
   return a.results[0].s + b.results[0].s + c.results[0].s;
@@ -245,7 +293,7 @@ async function countFaster(env, division, totalMs, createdAt) {
 async function rowsAfter(env, key, limit, div, inclusive = false) {
   const op = inclusive ? '>=' : '>';
   const { results } = await env.DB.prepare(
-    `SELECT ${COLS} FROM scores WHERE ${div.where} AND (total_ms, created_at) ${op} (?, ?) ORDER BY total_ms, created_at LIMIT ?`,
+    `SELECT ${COLS} FROM ${div.board.table} WHERE ${div.where} AND (total_ms, created_at) ${op} (?, ?) ORDER BY total_ms, created_at LIMIT ?`,
   ).bind(...div.binds, key.total_ms, key.created_at, limit).all();
   return results;
 }
@@ -253,7 +301,7 @@ async function rowsAfter(env, key, limit, div, inclusive = false) {
 async function rowsBefore(env, key, limit, div) {
   if (limit <= 0) return [];
   const { results } = await env.DB.prepare(
-    `SELECT ${COLS} FROM scores WHERE ${div.where} AND (total_ms, created_at) < (?, ?) ORDER BY total_ms DESC, created_at DESC LIMIT ?`,
+    `SELECT ${COLS} FROM ${div.board.table} WHERE ${div.where} AND (total_ms, created_at) < (?, ?) ORDER BY total_ms DESC, created_at DESC LIMIT ?`,
   ).bind(...div.binds, key.total_ms, key.created_at, limit).all();
   return results.reverse();
 }
@@ -280,7 +328,7 @@ function toPage(rows, firstRank, total) {
 
 async function firstPage(env, limit, div) {
   const { results } = await env.DB.prepare(
-    `SELECT ${COLS} FROM scores WHERE ${div.where} ORDER BY total_ms, created_at LIMIT ?`,
+    `SELECT ${COLS} FROM ${div.board.table} WHERE ${div.where} ORDER BY total_ms, created_at LIMIT ?`,
   ).bind(...div.binds, limit).all();
   const page = toPage(results, 1, div.total);
   return { ...page, top: page.rows }; // `top`: alias for pre-pagination clients (cached pages)
@@ -291,7 +339,7 @@ async function lastPage(env, limit, div) {
   if (!div.total) return toPage([], 1, 0);
   const count = ((div.total - 1) % limit) + 1;
   const { results } = await env.DB.prepare(
-    `SELECT ${COLS} FROM scores WHERE ${div.where} ORDER BY total_ms DESC, created_at DESC LIMIT ?`,
+    `SELECT ${COLS} FROM ${div.board.table} WHERE ${div.where} ORDER BY total_ms DESC, created_at DESC LIMIT ?`,
   ).bind(...div.binds, count).all();
   return toPage(results.reverse(), div.total - results.length + 1, div.total);
 }
@@ -311,19 +359,22 @@ async function pageAroundRow(env, key, rank, limit, div) {
 }
 
 async function pageAround(env, id, limit, division) {
-  const row = await env.DB.prepare('SELECT total_ms, created_at, division FROM scores WHERE id = ?').bind(String(id)).first();
+  const row = await env.DB.prepare('SELECT player, total_ms, created_at, division FROM scores WHERE id = ?').bind(String(id)).first();
   if (!row) return firstPage(env, limit, await divisionInfo(env, division));
   if (division == null) {
     // Global board (cached old clients): rank across both divisions.
     // Both per-division counts include a Say Goodnight row ahead of everyone: count it once.
-    const faster = (await countFaster(env, DIV_HUMAN, row.total_ms, row.created_at))
-      + (await countFaster(env, DIV_SUPREME, row.total_ms, row.created_at));
+    const faster = (await countFaster(env, ALL, DIV_HUMAN, row.total_ms, row.created_at))
+      + (await countFaster(env, ALL, DIV_SUPREME, row.total_ms, row.created_at));
     const rank = faster - (faster > 0 && row.total_ms > 350 ? 1 : 0) + 1;
     return pageAroundRow(env, row, rank, limit, await divisionInfo(env, null));
   }
-  // A division-scoped request shows the row's own division (that's where its rank lives).
-  const rank = (await countFaster(env, row.division, row.total_ms, row.created_at)) + 1;
-  return pageAroundRow(env, row, rank, limit, await divisionInfo(env, row.division));
+  // A division-scoped request shows the row's own division, at that nickname's best run.
+  const best = await env.DB.prepare('SELECT total_ms, created_at FROM best_scores WHERE division = ? AND name_key = ?')
+    .bind(row.division, nameKey(row.player)).first();
+  if (!best) return firstPage(env, limit, await divisionInfo(env, row.division));
+  const rank = (await countFaster(env, BEST, row.division, best.total_ms, best.created_at)) + 1;
+  return pageAroundRow(env, best, rank, limit, await divisionInfo(env, row.division));
 }
 
 /** Counts per 5 s bin split by division (from the coarse table) + the #1 record. */

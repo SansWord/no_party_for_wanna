@@ -181,7 +181,10 @@ async function finish(caseNo) {
     <dt>模擬案件編號</dt><dd>${caseNo}</dd>`;
   const scope = res.online ? '線上' : '本機';
   const division = res.division;
-  $('#result-rank').textContent = `${scope}${DIVISIONS[division]}：第 ${res.rank} 名（共 ${res.total} 筆）`;
+  const bestMs = res.best.timeMs + res.best.penaltyMs;
+  $('#result-rank').textContent = res.improved
+    ? `${scope}${DIVISIONS[division]}：第 ${res.rank} 名（共 ${res.total} 位玩家）・個人最佳！`
+    : `${scope}${DIVISIONS[division]}：個人最佳 ${formatDuration(bestMs)}，第 ${res.rank} 名（共 ${res.total} 位玩家）`;
   const why = res.division === 'supreme' ? flagReasons(res.flags || 0) : [];
   const note = [why.length ? `這次歸入至尊組：${why.join('、')}。` : '', boardNote(res)].filter(Boolean).join(' ');
   resultPanel.showResult(res, official, note);
@@ -615,6 +618,15 @@ function histogramRows(hist) {
  * screen), 人類組/至尊組 tabs and a paged board. Built for touch: every control is a full-width
  * or ≥44px tap target, nothing depends on hover.
  */
+/** 「總共有 x 人嘗試借用凱道」 under the title: every online run, minus the Say Goodnight seed. */
+function showAttemptCount(hist) {
+  const el = $('#attempt-count');
+  if (!hist.online) { el.hidden = true; return; }
+  const n = Math.max(0, hist.total - 1);
+  el.textContent = `總共有 ${n.toLocaleString('zh-TW')} 人嘗試借用凱道`;
+  el.hidden = false;
+}
+
 function makePanel(root, { onPage = () => {} } = {}) {
   const ol = $('[data-board]', root);
   const pager = $('[data-pager]', root);
@@ -663,7 +675,7 @@ function makePanel(root, { onPage = () => {} } = {}) {
     }
     const first = page.rows[0];
     const last = page.rows.at(-1);
-    info.textContent = first ? `第 ${first.rank}–${last.rank} 名（共 ${page.total} 筆）` : '';
+    info.textContent = first ? `第 ${first.rank}–${last.rank} 名（共 ${page.total.toLocaleString('zh-TW')} 位玩家）` : '';
     firstBtn.disabled = prevBtn.disabled = !page.prev;
     nextBtn.disabled = lastBtn.disabled = !page.next;
     pager.hidden = !page.prev && !page.next;
@@ -756,6 +768,7 @@ function makePanel(root, { onPage = () => {} } = {}) {
   async function loadHistogram() {
     hist = await getHistogram();
     renderHistogram();
+    showAttemptCount(hist);
   }
 
   for (const t of tabs) {
@@ -782,7 +795,7 @@ function makePanel(root, { onPage = () => {} } = {}) {
     showResult(res, officialMs, note) {
       mine = officialMs;
       myDivision = res.division;
-      highlight = res.record.id;
+      highlight = res.best.id; // the board lists the nickname's best run
       setTab(res.division);
       $('[data-note]', root).textContent = note;
       renderBoard(res.page);

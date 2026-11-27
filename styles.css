@@ -245,6 +245,10 @@ legend { font-weight: 700; color: var(--brand-dark); padding-right: 8px; }
 @media (max-width: 640px) { .hud-brand b { display: none; } }
 
 .game-title { font-size: 34px !important; letter-spacing: .02em !important; line-height: 1.25; }
+.attempt-count {
+  margin: 2px 0 6px; font-size: 15px; font-weight: 700; color: var(--brand);
+  font-variant-numeric: tabular-nums;
+}
 
 .sim-strip { position: sticky; top: var(--hud-h); z-index: 50; background: #2a2140; color: #f1ecff;
   text-align: center; font-size: 13px; padding: 6px 12px; }
