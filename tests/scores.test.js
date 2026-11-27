@@ -85,9 +85,11 @@ test('offline: histogram bins by 5 s and samples names from a range', async () =
   assert.deepEqual(s.names.sort(), ['P1', 'P2']);
 });
 
-test('Say Goodnight is a reserved nickname', () => {
+test('Say Goodnight and SansWord are reserved nicknames', () => {
   assert.ok(isReservedName(' say   GOODNIGHT '));
+  assert.ok(isReservedName('Sans Word'));
   assert.ok(!isReservedName('Say Goodnights'));
+  assert.ok(!isReservedName('SansWord2'));
 });
 
 test('offline: a division board lists each nickname once, at its best', async () => {

@@ -5,7 +5,9 @@ export const MIN_RUN_MS = 360;             // 10 ms slower than the seed (Say Go
 export const MAX_RUN_MS = 60 * 60 * 1000;  // runs expire after an hour
 export const MAX_PENALTY_MS = 600_000;
 export const MAX_ERRORS = 200;
-export const RESERVED_NAMES = ['say goodnight'];
+// Nicknames nobody can submit (compared case- and space-insensitively): the seed record, and
+// the author's own record (its best_scores row can then never be taken over).
+export const RESERVED_NAMES = ['say goodnight', 'sansword'];
 export const STARTS_PER_MINUTE = 20;
 // Spend guard: at most this many new scores per Taiwan calendar day (≈7 D1 row writes each,
 // so 150k ≈ 1M writes ≈ $1/day if all billed). Override with the DAILY_SCORE_CAP var.
@@ -43,8 +45,9 @@ export function sanitizePlayer(name) {
 }
 
 export function isReservedName(name) {
-  const key = sanitizePlayer(name).toLowerCase().replace(/\s+/g, ' ');
-  return RESERVED_NAMES.includes(key);
+  const squash = (n) => n.toLowerCase().replace(/\s+/g, '');
+  const key = squash(sanitizePlayer(name));
+  return RESERVED_NAMES.some((r) => squash(r) === key);
 }
 
 /**

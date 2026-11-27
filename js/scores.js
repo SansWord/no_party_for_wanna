@@ -21,9 +21,11 @@ export const SEED_RECORDS = [
   },
 ];
 
-/** Names players may not use (they would impersonate the seed record). */
+/** Names players may not use (same list as RESERVED_NAMES in the Worker; spaces and case ignored). */
+const RESERVED_NAMES = ['say goodnight', 'sansword'];
 export function isReservedName(name) {
-  return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ') === 'say goodnight';
+  const squash = (n) => String(n || '').toLowerCase().replace(/\s+/g, '');
+  return RESERVED_NAMES.some((r) => squash(r) === squash(name));
 }
 
 /**

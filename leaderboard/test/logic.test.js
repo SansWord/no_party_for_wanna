@@ -183,3 +183,10 @@ test('nameKey merges ASCII case like SQLite lower(), leaves other scripts alone'
   assert.equal(nameKey('我是人類ABC'), '我是人類abc');
   assert.equal(nameKey('Ｃlaude'), 'Ｃlaude'); // full-width: SQLite lower() doesn't fold it either
 });
+
+test('reserved nicknames ignore case and spaces: Say Goodnight and SansWord', () => {
+  for (const n of ['SansWord', 'sansword', ' Sans  Word ', 'SAYGOODNIGHT', 'say goodnight'])
+    assert.ok(isReservedName(n), n);
+  for (const n of ['SansWord2', 'Sans Words', 'Say Goodnight 2']) assert.ok(!isReservedName(n), n);
+  assert.equal(validateFinish({ elapsedMs: 60_000, player: 'Sans Word', penaltyMs: 0, errors: 0 }).error, 'name_reserved');
+});
