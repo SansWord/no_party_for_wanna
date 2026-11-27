@@ -114,3 +114,15 @@ test('offline: page=random lands on a valid aligned page', async () => {
     assert.ok([[1, 10], [11, 20], [21, 25]].some(([a, b]) => a === from && b === to), `${from}-${to}`);
   }
 });
+
+test('offline: name lookup opens the page holding that nickname, else a random page', async () => {
+  for (let i = 0; i < 24; i++) await submitResult(rec(i, 20_000 + i * 1000), null);
+  await submitResult({ id: 'fast', player: 'SansWord', timeMs: 5_000, penaltyMs: 0, errors: 0 }, null); // 至尊組
+  await submitResult({ id: 'h1', player: 'sansword', timeMs: 31_500, penaltyMs: 0, errors: 0 }, null);   // 人類組 rank 13
+  const auto = await getLeaderboardPage({ division: 'auto', name: 'SansWord' });
+  assert.deepEqual([auto.division, auto.mine, ...span(auto)], ['human', 'h1', 11, 20]);
+  const sup = await getLeaderboardPage({ division: 'supreme', name: 'sansword' });
+  assert.deepEqual([sup.division, sup.mine], ['supreme', 'fast']);
+  const none = await getLeaderboardPage({ division: 'auto', name: 'nobody' });
+  assert.deepEqual([none.division, none.mine], ['human', null]);
+});

@@ -3,7 +3,8 @@
 //   POST /api/runs                → { runId }   (player pressed 開始計時; runId is a signed token)
 //   POST /api/runs/:token/finish  → { record, rank, division, flags, total, page }
 //   GET  /api/leaderboard         → page: first page, or ?after=<cursor> / ?before=<cursor> /
-//                                   ?around=<id> / ?last=1 / ?page=<n>|random (needs division);
+//                                   ?around=<id> / ?last=1 / ?page=<n>|random (needs division) /
+//                                   ?name=<nickname> (page of that nickname's best; + division, mine);
 //                                   optional &division=human|supreme
 //   GET  /api/histogram           → { bins: [{ fromMs, toMs, n, human, supreme }], total, record }
 //   GET  /api/histogram/sample    → ?from=<ms>&to=<ms> → { names } (≈5 random nicknames)
@@ -38,7 +39,7 @@
 import {
   validateFinish, corsOrigin, clampLimit, bucketOf, coarseOf, BUCKET_MS, COARSE_MS, FINE_PER_COARSE,
   encodeCursor, decodeCursor, signRunToken, verifyRunToken, parseBody, LEGACY_RUN_RE, parseRange,
-  browserSignal, classifyRun, DIV_HUMAN, DIV_SUPREME, DIVISION_NAME, divisionIndex, dayKey, dailyCap, nameKey,
+  browserSignal, classifyRun, DIV_HUMAN, DIV_SUPREME, DIVISION_NAME, divisionIndex, dayKey, dailyCap, nameKey, sanitizePlayer,
 } from './logic.js';
 
 const TOP_N = 10;
@@ -91,6 +92,23 @@ export default {
           return json(await pageFrom(env, cursor, q.has('after') ? 'after' : 'before', limit, div));
         }
         if (q.has('around')) return json(await pageAround(env, q.get('around'), limit, division));
+        if (q.has('name')) {
+          // The page holding this nickname's best run (the lobby opens on "your" page), with
+          // `mine` = that run's id to highlight. Without a division: 人類組 if the nickname has a
+          // record there, else 至尊組. No record → a random page and mine = null.
+          const key = nameKey(sanitizePlayer(q.get('name')));
+          const divs = division == null ? [DIV_HUMAN, DIV_SUPREME] : [division];
+          const found = await env.DB.batch(divs.map((d) => env.DB.prepare(
+            'SELECT id, total_ms, created_at FROM best_scores WHERE division = ? AND name_key = ?',
+          ).bind(d, key)));
+          const i = found.findIndex((r) => r.results.length);
+          const d = divs[Math.max(0, i)];
+          const div = await divisionInfo(env, d);
+          if (i < 0) return json({ ...(await randomPage(env, limit, div)), division: DIVISION_NAME[d], mine: null });
+          const best = found[i].results[0];
+          const rank = (await countFaster(env, BEST, d, best.total_ms, best.created_at)) + 1;
+          return json({ ...(await pageAroundRow(env, best, rank, limit, div)), division: DIVISION_NAME[d], mine: best.id });
+        }
         if (q.has('page')) {
           // Page n (ranks (n-1)·limit+1 …) of a division board, or page=random (the lobby's
           // opening page and the 🎲 隨機 button).
@@ -98,9 +116,9 @@ export default {
           const n = Number(raw);
           if (division == null || (raw !== 'random' && (!Number.isInteger(n) || n < 1))) return json({ error: 'bad_page' }, 400);
           const div = await divisionInfo(env, division);
+          if (raw === 'random') return json(await randomPage(env, limit, div));
           const pages = Math.max(1, Math.ceil(div.total / limit));
-          const page = raw === 'random' ? 1 + Math.floor(Math.random() * pages) : Math.min(n, pages);
-          return json(await pageAtRank(env, (page - 1) * limit + 1, limit, div));
+          return json(await pageAtRank(env, (Math.min(n, pages) - 1) * limit + 1, limit, div));
         }
         if (q.has('last')) return json(await lastPage(env, limit, await divisionInfo(env, division)));
         const key = `${division}:${limit}`;
@@ -392,6 +410,12 @@ async function pageAtRank(env, rank, limit, div) {
     `SELECT ${COLS} FROM ${board.table} WHERE ${div.where} AND total_ms >= ? ORDER BY total_ms, created_at LIMIT ? OFFSET ?`,
   ).bind(...div.binds, f * BUCKET_MS, limit, rank - 1 - before).all();
   return toPage(results, rank, div.total);
+}
+
+/** A uniformly random aligned page of a division board. */
+function randomPage(env, limit, div) {
+  const pages = Math.max(1, Math.ceil(div.total / limit));
+  return pageAtRank(env, Math.floor(Math.random() * pages) * limit + 1, limit, div);
 }
 
 /** Page containing a row, aligned to fixed pages: rank 33 with limit 10 → ranks 31–40. */

@@ -628,6 +628,16 @@ function showAttemptCount(hist) {
   el.hidden = false;
 }
 
+const PLAYER_KEY = 'ketagalan-sim:player';
+/** The nickname this device last played with (also prefills the name box), or ''. */
+function savedPlayerName() {
+  try {
+    return (localStorage.getItem(PLAYER_KEY) || '').trim();
+  } catch {
+    return '';
+  }
+}
+
 function makePanel(root, { onPage = () => {} } = {}) {
   const ol = $('[data-board]', root);
   const pager = $('[data-pager]', root);
@@ -703,7 +713,14 @@ function makePanel(root, { onPage = () => {} } = {}) {
     firstBtn.disabled = prevBtn.disabled = randomBtn.disabled = nextBtn.disabled = lastBtn.disabled = true;
     ol.classList.add('loading');
     try {
-      renderBoard(await getLeaderboardPage({ division, ...params }));
+      const page = await getLeaderboardPage({ division, ...params });
+      if ('mine' in page) {
+        // A ?name= lookup: highlight that nickname's best and follow it to its division.
+        highlight = page.mine;
+        myDivision = page.mine ? page.division : null;
+        if (page.division !== division) setTab(page.division);
+      }
+      renderBoard(page);
     } finally {
       ol.classList.remove('loading');
     }
@@ -791,7 +808,8 @@ function makePanel(root, { onPage = () => {} } = {}) {
     t.addEventListener('click', () => {
       if (t.dataset.div === division) return;
       setTab(t.dataset.div);
-      go(highlight && myDivision === division ? { around: highlight } : { page: 'random' });
+      const name = savedPlayerName();
+      go(highlight && myDivision === division ? { around: highlight } : name ? { name } : { page: 'random' });
     });
   }
   prevBtn.addEventListener('click', () => current?.prev && go({ before: current.prev }));
@@ -809,12 +827,16 @@ function makePanel(root, { onPage = () => {} } = {}) {
   });
 
   return {
-    /** Lobby: histogram + a random page of the selected division (the 👑 card shows #1). */
+    /**
+     * Lobby: histogram + the page holding this device's nickname (its best run, gently
+     * highlighted), or a random page for a new player. The 👑 card always shows #1.
+     */
     load() {
       mine = null;
       myDivision = null;
       highlight = null;
-      return Promise.all([loadHistogram(), go({ page: 'random' })]);
+      const name = savedPlayerName();
+      return Promise.all([loadHistogram(), go(name ? { name, division: 'auto' } : { page: 'random' })]);
     },
     /** Result screen: open the player's division on their page, mark them in the histogram. */
     showResult(res, officialMs, note) {
@@ -855,7 +877,7 @@ function initLobby() {
   $('#lobby-location').textContent = mission.locationLabel;
   $('#lobby-period').textContent = missionPeriodLabel(mission);
   $('#hud-mission-text').textContent = `${missionPeriodLabel(mission)}・${mission.districtLabel}・凱達格蘭大道全段`;
-  const saved = localStorage.getItem('ketagalan-sim:player');
+  const saved = localStorage.getItem(PLAYER_KEY);
   if (saved) $('#player-name').value = saved;
   renderPersona();
   renderBoard();
@@ -871,7 +893,7 @@ $('#lobby-form').addEventListener('submit', (ev) => {
     return;
   }
   state.player = name;
-  localStorage.setItem('ketagalan-sim:player', state.player);
+  localStorage.setItem(PLAYER_KEY, state.player);
   startRun();
 });
 

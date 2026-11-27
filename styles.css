@@ -373,6 +373,9 @@ select.is-mission { border-color: #1a9b4b !important; background: #effaf2; box-s
 .board.loading { opacity: .5; transition: opacity .15s; }
 .board li.empty { display: block; text-align: center; color: var(--muted); padding: 16px 0; }
 .board-panel[data-division="supreme"] .board li.me { outline-color: var(--div-supreme); background: #f3efff; }
+/* Lobby: a gentle mark on this device's own record (the result screen keeps the outline). */
+[data-panel=lobby] .board li.me { outline: none; background: #eef7f4; box-shadow: inset 3px 0 0 var(--brand); }
+[data-panel=lobby][data-division="supreme"] .board li.me { outline: none; background: #f6f3ff; box-shadow: inset 3px 0 0 var(--div-supreme); }
 
 /* ===== Board rows & pager on phones: give names room, keep taps ≥ 40px ===== */
 @media (max-width: 480px) {

@@ -155,6 +155,18 @@ function localPageAround(id, division = null, limit = TOP_N) {
   return localPage(idx < 0 ? 0 : idx - (idx % limit), division, limit);
 }
 
+/** Offline twin of ?name=: the page of that nickname's best ('auto': 人類組 first), else random. */
+function localPageOfName(name, division) {
+  const key = nameKey(String(name).trim().replace(/\s+/g, ' '));
+  for (const d of division === 'auto' ? ['human', 'supreme'] : [division]) {
+    const best = localRanked(d).find((r) => !r.seed && nameKey(r.player) === key);
+    if (best) return { ...localPageAround(best.id, d), division: d, mine: best.id };
+  }
+  const d = division === 'auto' ? 'human' : division;
+  const pages = Math.max(1, Math.ceil(localRanked(d).length / TOP_N));
+  return { ...localPage(Math.floor(Math.random() * pages) * TOP_N, d), division: d, mine: null };
+}
+
 function localSubmit(record) {
   const all = readAll();
   all.push(record);
@@ -247,14 +259,22 @@ export async function submitResult(record, run) {
 /**
  * One page of a division's leaderboard (`division`: 'human' | 'supreme'). Pass nothing else for
  * the first page, `{ after }` / `{ before }` with a cursor from a previous page, `{ around: id }`
- * for the page containing a record, `{ last: true }`, or `{ page: n | 'random' }`. Pages are aligned to ranks 10n+1.
+ * for the page containing a record, `{ last: true }`, `{ page: n | 'random' }`, or `{ name }` for the
+ * page holding that nickname's best (`division: 'auto'` picks 人類組, else 至尊組; the result has
+ * `division` and `mine`, the id to highlight, or null with a random page when there's no record). Pages are aligned to ranks 10n+1.
  * @returns {Promise<Page>}
  */
-export async function getLeaderboardPage({ division = 'human', after, before, around, last, page } = {}) {
+export async function getLeaderboardPage({ division = 'human', after, before, around, last, page, name } = {}) {
   const local = (after && after.startsWith('L')) || (before && before.startsWith('L'));
   if (apiBase() && !local) {
     try {
-      const q = new URLSearchParams({ limit: String(TOP_N), division });
+      const q = new URLSearchParams({ limit: String(TOP_N) });
+      if (division !== 'auto') q.set('division', division);
+      if (name) {
+        q.set('name', name);
+        const res = await api(`/api/leaderboard?${q}`);
+        return { online: true, ...res, division: res.division || division };
+      }
       if (after) q.set('after', after);
       else if (before) q.set('before', before);
       else if (around) q.set('around', around);
@@ -265,6 +285,7 @@ export async function getLeaderboardPage({ division = 'human', after, before, ar
       console.warn('[leaderboard] fetch failed, showing local', err);
     }
   }
+  if (name) return localPageOfName(name, division);
   const rankOf = (cursor) => Number(cursor.split(':')[1]);
   if (after) return localPage(rankOf(after), division);
   if (before) return localPage(Math.max(0, rankOf(before) - 1 - TOP_N), division);
