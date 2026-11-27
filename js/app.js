@@ -182,9 +182,10 @@ async function finish(caseNo) {
   const scope = res.online ? '線上' : '本機';
   const division = res.division;
   const bestMs = res.best.timeMs + res.best.penaltyMs;
+  const players = res.total.toLocaleString('zh-TW');
   $('#result-rank').textContent = res.improved
-    ? `${scope}${DIVISIONS[division]}：第 ${res.rank} 名（共 ${res.total} 位玩家）・個人最佳！`
-    : `${scope}${DIVISIONS[division]}：個人最佳 ${formatDuration(bestMs)}，第 ${res.rank} 名（共 ${res.total} 位玩家）`;
+    ? `${scope}${DIVISIONS[division]}：第 ${res.rank} 名（共 ${players} 位玩家）・個人最佳！`
+    : `${scope}${DIVISIONS[division]}：個人最佳 ${formatDuration(bestMs)}，第 ${res.rank} 名（共 ${players} 位玩家）`;
   const why = res.division === 'supreme' ? flagReasons(res.flags || 0) : [];
   const note = [why.length ? `這次歸入至尊組：${why.join('、')}。` : '', boardNote(res)].filter(Boolean).join(' ');
   resultPanel.showResult(res, official, note);

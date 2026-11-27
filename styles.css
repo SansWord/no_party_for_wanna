@@ -237,6 +237,16 @@ legend { font-weight: 700; color: var(--brand-dark); padding-right: 8px; }
 .board li.gap { display: block; text-align: center; color: var(--muted); border: 0; }
 .board li.empty { display: block; margin-left: 0; }
 .result-rank { font-weight: 700; color: var(--brand-dark); }
+/* Links to the announcement post on Threads (lobby text link, result-screen button). */
+.threads-line { margin: 0 0 10px; }
+.threads-link { color: var(--brand); font-weight: 700; font-size: 15px; text-decoration: none; }
+.threads-link:hover { text-decoration: underline; }
+.threads-btn {
+  display: inline-flex; align-items: center; min-height: 40px; padding: 8px 16px;
+  border: 1px solid var(--brand); border-radius: 10px; background: #fff;
+  color: var(--brand-dark); font-weight: 700; text-decoration: none;
+}
+.threads-btn:hover { background: #e6f4f1; }
 .result-board { text-align: left; margin-top: 12px; }
 .result-board h2 { font-size: 15px; margin: 0 0 6px; }
 
